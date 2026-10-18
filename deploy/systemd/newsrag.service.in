@@ -1,0 +1,22 @@
+# Template: deploy/install-service.sh fills in @REPO@ and installs this as a
+# systemd user unit (~/.config/systemd/user/newsrag.service).
+[Unit]
+Description=newsrag ingestion pipeline (poller, fetcher, writer under one supervisor)
+Documentation=file://@REPO@/docs/setup-linux.md
+
+[Service]
+Type=simple
+WorkingDirectory=@REPO@
+ExecStart=@REPO@/.venv/bin/newsrag run all
+Environment=PYTHONUNBUFFERED=1
+# SIGTERM goes to the supervisor only; it stops its children gracefully (the writer
+# flushes) within 90 s. systemd SIGKILLs whatever is left after TimeoutStopSec.
+KillMode=mixed
+KillSignal=SIGTERM
+TimeoutStopSec=150
+# The supervisor restarts components itself; this covers the supervisor dying.
+Restart=on-failure
+RestartSec=10
+
+[Install]
+WantedBy=default.target

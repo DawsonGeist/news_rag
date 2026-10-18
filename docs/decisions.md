@@ -2,6 +2,13 @@
 
 Newest first. Each entry records what was decided, why, and what would reopen it.
 
+## 2026-10-18: P1.7 soak setup
+
+| Decision | Choice | Why | Revisit if |
+| --- | --- | --- | --- |
+| Process manager | A systemd user service (`deploy/install-service.sh`) running `newsrag run all`, with lingering enabled | Survives logout and closing the session. systemd restarts the supervisor; the supervisor restarts components. `KillMode=mixed` lets the supervisor stop children gracefully. | Moving to a system service or containers |
+| Gate 1 soak | Approved by the author: 72 h of continuous crawling of all accepted feeds | G1.2 and G1.3 need it | — |
+
 ## 2026-10-18: P1.6 maintenance and reports
 
 | Decision | Choice | Why | Revisit if |

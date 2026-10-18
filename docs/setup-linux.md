@@ -75,14 +75,29 @@ python -c "import torch; print(torch.cuda.get_device_name(), torch.cuda.get_devi
 
 Install Docker Engine from Docker's apt repository, plus the NVIDIA Container Toolkit if a container needs the GPU. We'll write a `docker-compose.yml` then.
 
-## 6. Running Phase 1 (once implemented)
+## 6. Running the pipeline
+
+The pipeline runs as a systemd **user** service, so it survives closing the terminal and logging out:
 
 ```bash
-source .venv/bin/activate
-newsrag db init
-newsrag run all                            # poller + fetcher + writer, supervised
-newsrag report lag --since 24h
+loginctl enable-linger "$USER"           # once: user services run without a login session
+deploy/install-service.sh --start        # install, enable and start (re-run after moving the repo)
+
+systemctl --user status newsrag          # running? recent log lines
+journalctl --user -u newsrag -f          # supervisor output
+tail -f ~/newsrag-data/logs/{supervisor,poller,fetcher,writer}.log
+systemctl --user stop newsrag            # graceful: the writer flushes before exit
 ```
+
+Health checks while it runs:
+
+```bash
+newsrag report lag --since 24h           # G1.3 lag percentiles, queue depth
+newsrag report disk                      # G1.7 sizes and 12-month forecast
+newsrag storage verify                   # storage invariants (add --deep to re-hash)
+```
+
+The service unit is `deploy/systemd/newsrag.service.in`, and the install script fills in this checkout's path. To run in the foreground instead, use `newsrag run all`.
 
 ## Moving the archive
 
