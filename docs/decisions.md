@@ -2,6 +2,16 @@
 
 Newest first. Each entry records what was decided, why, and what would reopen it.
 
+## 2026-10-17: P1.2 fetcher
+
+| Decision | Choice | Why | Revisit if |
+| --- | --- | --- | --- |
+| One request per host | The claim reserves the host by pushing `hosts.next_allowed_at` past the longest possible fetch | Works across several fetcher processes with no DDL change. A crashed fetcher's reservation lapses on its own. | Fetchers span machines (Postgres) |
+| Redirects | Followed by hand, with a robots.txt check on every hop | httpx's automatic redirects would skip robots for the target host | — |
+| robots.txt unavailable | Retry the URL with backoff, back off the host, and re-check at the next retry instead of caching for 24 h | RFC 9309 says to assume disallow while unavailable. A one-off outage shouldn't block a host for a day. | — |
+| Missing Content-Type | Kept and fetched | Misconfigured servers would otherwise lose real articles. The extractor marks non-articles. | Junk blobs show up in practice |
+| Operator contact | User-Agent `newsrag/0.1`, with `From: dawson.geist@gmail.com` (RFC 9110). Supersedes the mailto User-Agent below. | The smoke test found that NPR's firewall stalls any request whose User-Agent contains an email or URL, but accepts `newsrag/0.1` plus `From:`. Author's choice. | Many sites reject the bare token |
+
 ## 2026-10-17: Backend desktop and P1.1 storage
 
 These entries supersede the Runtime, VRAM, and Python rows of "Phase 1 foundations" below.
@@ -47,6 +57,7 @@ These entries supersede the Runtime, VRAM, and Python rows of "Phase 1 foundatio
 | VRAM | 8 GB (RTX 2070 Max-Q) | Author freed VRAM by closing other projects | Phase 2 model selection |
 
 ## Open
+
 
 - Golden fixtures stay local-only even though the repo is private, since the repo may become public again and git history keeps everything.
 - Whether to add a headless-browser fetcher for JavaScript-only sites. Not in Phase 1.

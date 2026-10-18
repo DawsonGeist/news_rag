@@ -11,7 +11,7 @@ A local-first search engine over news and long-form content. It finds articles b
 
 ## Status
 
-Phase 1 (vet, poll, fetch, extract, store). P1.0 (skeleton, contracts, state DDL, feed candidates) and P1.1 (blob store, table-file writer, recovery, kill test) are done. Next is P1.2: the fetcher.
+Phase 1 (vet, poll, fetch, extract, store). P1.0 (skeleton, contracts, state DDL, feed candidates) P1.1 (blob store, table-file writer, recovery, kill test) and P1.2 (fetcher) are done. Next is P1.3: the extractor.
 
 ## Layout
 
@@ -48,6 +48,7 @@ newsrag feeds candidates           # regenerate feeds/candidates_us.yaml
 newsrag db init                    # create the crawl-state DB
 newsrag storage verify [--deep]    # check storage invariants
 newsrag test kill                  # SIGKILL kill test (Gate 1, G1.4)
+newsrag run fetcher                # fetch pending frontier URLs until SIGTERM
 ```
 
 Everything runs on one native Ubuntu desktop (see [docs/setup-linux.md](docs/setup-linux.md)). The code is POSIX-only (`fcntl`, directory fsync).

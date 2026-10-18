@@ -21,8 +21,12 @@ from pydantic import BaseModel, ConfigDict, Field, field_validator
 REPO_ROOT = Path(__file__).resolve().parents[2]
 DEFAULT_CONFIG_PATH = REPO_ROOT / "config" / "newsrag.toml"
 DEFAULT_DATA_DIR = Path("~/newsrag-data")
-# The repo is private, so the UA carries a contact address webmasters can actually reach.
-USER_AGENT = "newsrag/0.1 (+mailto:dawson.geist@gmail.com)"
+CONTACT_EMAIL = "dawson.geist@gmail.com"
+# A bare product token: some WAFs (NPR's, for one) stall User-Agents that contain an
+# email or URL. The operator's contact goes in the From header instead (contact_email).
+USER_AGENT = "newsrag/0.1"
+# The product token robots.txt groups are matched against.
+ROBOTS_AGENT = "newsrag"
 
 
 class _Section(BaseModel):
@@ -37,6 +41,11 @@ class FetchSettings(_Section):
     max_body_bytes: int = 5_000_000
     max_attempts: int = 5
     lease_s: int = 300
+    claim_batch: int = 200
+    max_redirects: int = 5
+    robots_ttl_s: int = 86400
+    retry_base_s: float = 60.0  # retry n waits retry_base_s * 4**(n-1), +-20% jitter
+    max_retry_after_s: int = 21600  # cap on a server's Retry-After
 
 
 class PollSettings(_Section):
@@ -68,6 +77,9 @@ class RetentionSettings(_Section):
 class Settings(_Section):
     data_dir: Path = Field(default=DEFAULT_DATA_DIR, validate_default=True)
     user_agent: str = USER_AGENT
+    # Sent as the HTTP From header (RFC 9110 10.1.2), the standard place for a crawler
+    # operator's address; some WAFs reject User-Agents that contain one.
+    contact_email: str = CONTACT_EMAIL
     fetch: FetchSettings = FetchSettings()
     poll: PollSettings = PollSettings()
     writer: WriterSettings = WriterSettings()

@@ -71,7 +71,7 @@ CREATE TABLE IF NOT EXISTS feed_polls (
 CREATE TABLE IF NOT EXISTS hosts (
     host               TEXT PRIMARY KEY,    -- e.g. 'www.foxnews.com'
     robots_txt         TEXT,
-    robots_status      INTEGER,
+    robots_status      INTEGER,             -- HTTP status; 0 = network error; NULL = never fetched
     robots_fetched_at  TEXT,
     crawl_delay_s      REAL NOT NULL,
     next_allowed_at    TEXT,

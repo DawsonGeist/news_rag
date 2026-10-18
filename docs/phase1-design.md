@@ -116,14 +116,22 @@ stored ──feed reports update──▶ pending (low priority re-fetch)
 
 ### 3. Article fetcher
 
-- **Concurrency:** asyncio with httpx (HTTP/2 enabled). At most `global_concurrency` (64) requests in flight and **one per host**. The host's `next_allowed_at` is set to now + `crawl_delay_s`: robots.txt `Crawl-delay` if present, else 5 s, capped at 60 s.
-- **Claiming work:** one transaction leases a batch of up to 200 ready rows, spread across hosts whose `next_allowed_at <= now`. This stops one big publisher from starving the rest.
-- **robots.txt:** parsed with protego and cached in `hosts` for 24 h. A `5xx` robots response means "disallow for now". A `4xx` means "allow". A disallowed URL is set to `skipped` with `skip_reason='robots'`.
-- **Request:** a `User-Agent` with the project URL, gzip/br accepted, redirects followed (up to 5), and a body limit of 5 MB. Only `text/html` and `application/xhtml+xml` are kept; anything else becomes `skipped`.
+- **Concurrency:** asyncio with httpx (HTTP/2 enabled). At most `global_concurrency` (64) requests in flight and **one per host**. When a fetch ends, the host's `next_allowed_at` is set to now + `crawl_delay_s`: robots.txt `Crawl-delay` if present, else 5 s, capped at 60 s.
+- **Claiming work:** one transaction leases up to `claim_batch` (200) ready rows, **at most one per host**, from hosts whose `next_allowed_at` and `backoff_until` have passed. This stops one big publisher from starving the rest.
+- **Host reservation:** the claim also pushes the host's `next_allowed_at` past the longest possible fetch (2 × request timeout + 30 s). No other claim, in this process or another fetcher process, can pick that host until the fetch ends and sets the real next time. A crashed fetcher's reservation simply lapses. This needs no extra columns or locks.
+- **robots.txt:** parsed with protego against the product token `newsrag`, and cached in `hosts` for 24 h.
+  - A `4xx` response means "allow".
+  - A `5xx` or network error means "unavailable": the URL is retried with backoff, the whole host backs off, and the result is cached for only one retry interval. `robots_status = 0` records a network error.
+  - A disallowed URL is set to `skipped` with `skip_reason='robots'`.
+- **Request:**
+  - Headers: the `User-Agent` and a `From:` header carrying the operator's email (RFC 9110). gzip, br and zstd are accepted.
+  - Redirects are followed **by hand** (up to 5), so robots.txt is checked on every hop, including hops to other hosts.
+  - Body limit of 5 MB, counted on decoded bytes, so a small gzip bomb is caught too.
+  - Only `text/html` and `application/xhtml+xml` are kept. A missing `Content-Type` is kept too, and the extractor decides. Anything else becomes `skipped`.
+- **Commit guard:** the result is committed only if the row is still `fetching` under this worker's lease. If the lease lapsed and another worker took the row, the result is dropped.
 - **On success:**
-  1. sha256 the body
-  2. if the blob is new, write it compressed to `tmp/`, fsync, rename, then fsync the directory
-  3. in one transaction: `BlobStore.commit` (rename into `raw/` and upsert the `blobs` row with `expires_at = now + retention.raw_days`), set the frontier row to `fetched` (with `final_url`, `http_status`, `raw_blob_hash`), and write a `fetch` stage event. The rename happens under the write lock so that it serializes with retention's unlinks.
+  1. sha256 the body and stage it compressed in the process's tmp area (in a thread, off the event loop)
+  2. in one transaction: `BlobStore.commit` (rename into `raw/` and upsert the `blobs` row with `expires_at = now + retention.raw_days`), set the frontier row to `fetched` (with `final_url`, `http_status`, `raw_blob_hash`), and write a `fetch` stage event. The rename happens under the write lock so that it serializes with retention's unlinks.
 - No JavaScript rendering in Phase 1. The vetter flags sites that need it, because their full-text ratio comes out low.
 
 ### 4. Extractor (runs inside the writer's process pool)
@@ -215,7 +223,7 @@ Gates 2 and 3 are outlined here and get detailed in their own design docs:
 
 1. **P1.0** (done): skeleton, contracts, state DDL, candidate extraction.
 2. **P1.1** (done): blob store, table-file writer, recovery, plus their unit tests and kill-test harness. Everything else commits through this, so it comes first.
-3. **P1.2:** fetcher with robots.txt and politeness, against the local fixture server.
+3. **P1.2** (done): fetcher with robots.txt and politeness, tested against mock transports and a local HTTP server.
 4. **P1.3:** extractor, plus synthetic and golden fixtures.
 5. **P1.4:** poller and the supervisor (`run all`).
 6. **P1.5:** vetter stages B and C, reusing the fetcher and extractor. Run it on all 9,069 text candidates.

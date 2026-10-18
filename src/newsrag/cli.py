@@ -16,11 +16,13 @@ feeds_app = typer.Typer(no_args_is_help=True, help="Feed lists and vetting.")
 db_app = typer.Typer(no_args_is_help=True, help="Crawl-state database.")
 storage_app = typer.Typer(no_args_is_help=True, help="Archive storage.")
 test_app = typer.Typer(no_args_is_help=True, help="Durability tests.")
+run_app = typer.Typer(no_args_is_help=True, help="Long-running pipeline processes.")
 app.add_typer(contracts_app, name="contracts")
 app.add_typer(feeds_app, name="feeds")
 app.add_typer(db_app, name="db")
 app.add_typer(storage_app, name="storage")
 app.add_typer(test_app, name="test")
+app.add_typer(run_app, name="run")
 
 SCHEMAS_DIR = REPO_ROOT / "contracts" / "v1" / "schemas"
 FEEDS_DIR = REPO_ROOT / "feeds"
@@ -138,6 +140,39 @@ def test_kill(
     typer.echo(f"{iterations - len(failures)}/{iterations} iterations passed")
     if failures:
         raise typer.Exit(1)
+
+
+def _setup_logging() -> None:
+    import logging
+
+    logging.basicConfig(
+        level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s: %(message)s"
+    )
+
+
+@run_app.command("fetcher")
+def run_fetcher_cmd() -> None:
+    """Fetch pending frontier URLs until SIGTERM/SIGINT, then drain in-flight requests."""
+    import asyncio
+    import signal
+
+    from newsrag.crawl.fetcher import run_fetcher
+    from newsrag.storage.state import connect, init_schema
+
+    _setup_logging()
+    settings = load_settings()
+    conn = connect(settings.state_db)
+    init_schema(conn)
+
+    async def main() -> None:
+        stop = asyncio.Event()
+        loop = asyncio.get_running_loop()
+        for sig in (signal.SIGTERM, signal.SIGINT):
+            loop.add_signal_handler(sig, stop.set)
+        await run_fetcher(settings, conn, stop)
+
+    asyncio.run(main())
+    conn.close()
 
 
 if __name__ == "__main__":
