@@ -211,6 +211,25 @@ def feeds_export(
     typer.echo(f"wrote {len(rows)} accepted feeds to {out}")
 
 
+@feeds_app.command("pause-blocked")
+def feeds_pause_blocked(
+    dry_run: bool = typer.Option(False, help="Only list the feeds that would be paused."),
+) -> None:
+    """Pause active feeds whose article fetches were mostly answered 403 over the last
+    7 days (the publisher blocks the crawler). Run daily by the supervisor."""
+    from newsrag.feeds.registry import find_blocked_feeds, pause_blocked_feeds
+    from newsrag.storage.state import connect
+    from newsrag.timeutil import utcnow
+
+    settings = load_settings()
+    conn = connect(settings.state_db)
+    found = (find_blocked_feeds if dry_run else pause_blocked_feeds)(conn, utcnow())
+    conn.close()
+    for b in found:
+        typer.echo(f"{b.feed_url}\t{b.blocked}/{b.fetches} blocked")
+    typer.echo(f"{len(found)} feeds {'would be ' if dry_run else ''}paused")
+
+
 @feeds_app.command("set-status")
 def feeds_set_status(
     status: str = typer.Argument(..., help="candidate | active | review | rejected | paused"),

@@ -233,6 +233,7 @@ class Vetter:
             async with self.slots.slot(host) as slot:
                 res = await self.http.get(feed.feed_url, accept=accept_any)
                 slot.network_error = res.kind in ("network", "timeout")
+                slot.blocked = res.kind == "http_error" and res.status == 403
             check.http_status = res.status
             check.final_feed_url = res.final_url
             check.error = _error(res.kind, res.status, res.error)
@@ -269,6 +270,7 @@ class Vetter:
         async with self.slots.slot(host_of(url)) as slot:
             res = await self.http.get(url)
             slot.network_error = res.kind in ("network", "timeout")
+            slot.blocked = res.kind == "http_error" and res.status == 403
         if res.kind == "disallowed":
             return Sample(url, None, robots_disallowed=True, error="robots")
         if res.kind != "ok" or res.body is None:

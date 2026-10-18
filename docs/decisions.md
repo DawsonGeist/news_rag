@@ -2,6 +2,13 @@
 
 Newest first. Each entry records what was decided, why, and what would reopen it.
 
+## 2026-10-18: Handling hosts that block the crawler
+
+| Decision | Choice | Why | Revisit if |
+| --- | --- | --- | --- |
+| Repeated 403s | Back off the whole host from the 2nd consecutive host-level failure that includes a 403: 1 h, doubling, capped at 24 h, reset by any normal answer. Shared by the fetcher, poller and vetter (`release_host`). Streaks reuse `hosts.consecutive_errors`, so no migration was needed. | A 403 is a refusal. Trying the host's other URLs every 5 s ignores it, is impolite, and risks getting the home IP flagged more widely (bhg.com began blocking mid-soak). | Legitimate per-page 403s cause needless host pauses |
+| Chronic blockers | Daily supervisor job `feeds pause-blocked`: pause active feeds with at least 80% 403 among at least 10 article fetches in 7 days. `paused` is operational, so a human decides from `feeds report --list paused`. | Vetting samples too few articles to trip bot protection. 54 feeds met the rule after 10 h, including Industry Dive's whole network. | — |
+
 ## 2026-10-18: P1.7 soak setup
 
 | Decision | Choice | Why | Revisit if |

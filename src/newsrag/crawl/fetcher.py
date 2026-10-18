@@ -63,6 +63,7 @@ class FetchOutcome:
     delay_s: float = 0.0
     host_backoff_s: float | None = None
     network_error: bool = False
+    blocked: bool = False  # HTTP 403: the host refused us
 
 
 def claim_fetch_batch(
@@ -247,6 +248,7 @@ class Fetcher:
                     delay_s=d.delay_s,
                     host_backoff_s=d.host_backoff_s,
                     network_error=status >= 500,
+                    blocked=status == 403,
                 )
 
     # --- commit -------------------------------------------------------------------------
@@ -331,6 +333,7 @@ class Fetcher:
             host,
             now,
             network_error=out.network_error,
+            blocked=out.blocked,
             backoff_s=out.host_backoff_s,
         )
 

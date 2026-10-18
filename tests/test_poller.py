@@ -341,3 +341,37 @@ def test_registry_import_is_idempotent_and_keeps_status(conn: sqlite3.Connection
     assert (stats.feeds_new, stats.feeds_updated) == (0, 1)
     row = conn.execute("SELECT status, categories_json FROM feeds").fetchone()
     assert row["status"] == "active" and "Politics" in row["categories_json"]
+
+
+def test_pause_blocked_feeds(conn: sqlite3.Connection) -> None:
+    from newsrag.feeds.registry import find_blocked_feeds, pause_blocked_feeds
+
+    blocked = add_feed(conn, "https://blocker.example/rss", "blocker.example")
+    fine = add_feed(conn, "https://fine.example/rss", "fine.example")
+    few = add_feed(conn, "https://few.example/rss", "few.example")
+    now = utcnow()
+    events = (
+        [(blocked, "error", "http_403")] * 9
+        + [(blocked, "ok", None)]
+        + [(fine, "ok", None)] * 9
+        + [(fine, "error", "http_403")]
+        + [(few, "error", "http_403")] * 3  # too few fetches to judge
+    )
+    with transaction(conn):
+        for i, (fid, status, code) in enumerate(events):
+            conn.execute(
+                "INSERT INTO stage_events (event_id, stage, status, feed_id, worker_id, attempt, "
+                "started_at, finished_at, error_code, pipeline_version) "
+                "VALUES (?, 'fetch', ?, ?, 'w', 1, ?, ?, ?, 't')",
+                (f"E{i:025d}", status, fid, to_db(now), to_db(now), code),
+            )
+    assert [b.feed_id for b in find_blocked_feeds(conn, utcnow())] == [blocked]
+    paused = pause_blocked_feeds(conn, utcnow())
+    assert [(b.blocked, b.fetches) for b in paused] == [(9, 10)]
+    status = dict(conn.execute("SELECT feed_id, status FROM feeds").fetchall())
+    assert status == {blocked: "paused", fine: "active", few: "active"}
+    reason = conn.execute(
+        "SELECT status_reason FROM feeds WHERE feed_id = ?", (blocked,)
+    ).fetchone()
+    assert reason[0] == "blocked: 9/10 article fetches answered 403"
+    assert find_blocked_feeds(conn, utcnow()) == []  # paused feeds are not active

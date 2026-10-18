@@ -78,3 +78,10 @@ def test_http_error_rules() -> None:
     assert d.retry and d.host_backoff_s == 600 and d.delay_s >= 600
     assert decide(503, 1, retry_after=10**9).host_backoff_s == 21600  # capped
     assert decide(503, 1).host_backoff_s is not None  # backs off the host even without header
+
+
+def test_blocked_backoff_escalates_from_threshold() -> None:
+    b = pol.blocked_backoff_s
+    assert b(1, 2, 3600, 86400) is None  # a single 403 may be one forbidden page
+    assert [b(n, 2, 3600, 86400) for n in (2, 3, 4)] == [3600.0, 7200.0, 14400.0]
+    assert b(20, 2, 3600, 86400) == 86400.0  # capped at a day

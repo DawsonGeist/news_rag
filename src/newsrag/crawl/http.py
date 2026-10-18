@@ -99,19 +99,35 @@ def release_host(
     now: datetime,
     *,
     network_error: bool = False,
+    blocked: bool = False,
     backoff_s: float | None = None,
 ) -> None:
     """End a reservation: the host is next allowed one crawl delay from now. Call inside
-    the transaction that commits the request's result."""
-    row = conn.execute("SELECT crawl_delay_s FROM hosts WHERE host = ?", (host,)).fetchone()
+    the transaction that commits the request's result.
+
+    ``consecutive_errors`` counts consecutive host-level failures (network errors, 5xx
+    and 403 blocks) and resets on any other answer. A block (``blocked``) with a long
+    enough streak backs off the whole host (``politeness.blocked_backoff_s``).
+    """
+    row = conn.execute(
+        "SELECT crawl_delay_s, consecutive_errors FROM hosts WHERE host = ?", (host,)
+    ).fetchone()
     delay = row["crawl_delay_s"] if row else settings.fetch.default_crawl_delay_s
+    streak = (row["consecutive_errors"] if row else 0) + 1 if (network_error or blocked) else 0
+    if blocked:
+        f = settings.fetch
+        block_s = pol.blocked_backoff_s(
+            streak, f.block_streak_threshold, f.block_backoff_start_s, f.block_backoff_max_s
+        )
+        if block_s is not None:
+            backoff_s = max(backoff_s or 0.0, block_s)
+            log.info("%s blocked us %d times running; backing off %.0f s", host, streak, block_s)
     backoff = to_db(now + timedelta(seconds=backoff_s)) if backoff_s is not None else None
     conn.execute(
         "UPDATE hosts SET next_allowed_at = ?, "
-        "backoff_until = coalesce(?, backoff_until), "
-        "consecutive_errors = CASE WHEN ? THEN consecutive_errors + 1 ELSE 0 END "
+        "backoff_until = coalesce(?, backoff_until), consecutive_errors = ? "
         "WHERE host = ?",
-        (to_db(now + timedelta(seconds=delay)), backoff, network_error, host),
+        (to_db(now + timedelta(seconds=delay)), backoff, streak, host),
     )
 
 
@@ -270,6 +286,7 @@ class SlotResult:
     """Set by the holder of a host slot; applied when the slot is released."""
 
     network_error: bool = False
+    blocked: bool = False
     backoff_s: float | None = None
 
 
@@ -318,5 +335,6 @@ class HostSlots:
                         host,
                         utcnow(),
                         network_error=result.network_error,
+                        blocked=result.blocked,
                         backoff_s=result.backoff_s,
                     )

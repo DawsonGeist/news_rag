@@ -239,6 +239,7 @@ class PollOutcome:
     retry_after_s: float | None = None
     host_backoff_s: float | None = None
     network_error: bool = False
+    blocked: bool = False  # HTTP 403: the host refused us
 
 
 @dataclass
@@ -349,6 +350,7 @@ class Poller:
             out.host_backoff_s = d.host_backoff_s
             out.retry_after_s = d.host_backoff_s
             out.network_error = res.status >= 500
+            out.blocked = res.status == 403
         elif res.kind in ("network", "timeout"):
             out.network_error = True
         elif res.kind == "robots_unavailable":
@@ -405,6 +407,7 @@ class Poller:
                 claim.host,
                 now,
                 network_error=out.network_error,
+                blocked=out.blocked,
                 backoff_s=out.host_backoff_s,
             )
             record(self.conn, events)

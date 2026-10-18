@@ -33,7 +33,10 @@ log = logging.getLogger("newsrag.supervisor")
 
 COMPONENTS = ("poller", "fetcher", "writer")
 # One-shot jobs: (name, CLI args, first run after s, then every s).
-JOBS = (("retention", ("storage", "retention"), 600.0, 86400.0),)
+JOBS = (
+    ("retention", ("storage", "retention"), 600.0, 86400.0),
+    ("pause-blocked", ("feeds", "pause-blocked"), 900.0, 86400.0),
+)
 STOP_TIMEOUT_S = 90.0
 CRASH_WINDOW_S = 600.0
 MAX_BACKOFF_S = 60.0

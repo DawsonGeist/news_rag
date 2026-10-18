@@ -429,3 +429,43 @@ async def test_unexpected_protocol_errors_are_network_errors(
     (uid2,) = add_urls(conn, "https://f.com/a")
     await process_one(settings_for(data_dir), conn, robots_breaks)
     assert row(conn, uid2)["last_error"] == "robots_unavailable"
+
+
+async def test_repeated_403s_back_off_the_whole_host(
+    conn: sqlite3.Connection, data_dir: Path
+) -> None:
+    s = settings_for(data_dir)
+    add_urls(conn, *[f"https://blocker.example/{i}" for i in range(5)])
+    handler = routes({f"blocker.example/{i}": httpx.Response(403) for i in range(5)})
+
+    def host() -> sqlite3.Row:
+        r: sqlite3.Row = conn.execute(
+            "SELECT consecutive_errors, backoff_until FROM hosts WHERE host = 'blocker.example'"
+        ).fetchone()
+        return r
+
+    await process_one(s, conn, handler)
+    assert host()["consecutive_errors"] == 1 and host()["backoff_until"] is None
+    with transaction(conn):  # let the next claim through without waiting the crawl delay
+        conn.execute("UPDATE hosts SET next_allowed_at = NULL")
+    await process_one(s, conn, handler)
+    first = from_db(host()["backoff_until"]) - utcnow()
+    assert timedelta(minutes=59) < first <= timedelta(hours=1)
+    # Backing off: no URL on the host is claimable, however many are pending.
+    assert claim_fetch_batch(conn, s, "w", 10, utcnow()) == []
+
+    with transaction(conn):  # the back-off lapses; the host blocks us once more
+        conn.execute("UPDATE hosts SET next_allowed_at = NULL, backoff_until = NULL")
+    await process_one(s, conn, handler)
+    second = from_db(host()["backoff_until"]) - utcnow()
+    assert timedelta(minutes=119) < second <= timedelta(hours=2)  # doubled
+
+    with transaction(conn):  # it lets us in again: the streak resets
+        conn.execute("UPDATE hosts SET next_allowed_at = NULL, backoff_until = NULL")
+    ok = routes({"blocker.example/3": httpx.Response(200, headers=HTML, content=b"<p>x</p>")})
+    with transaction(conn):
+        conn.execute(
+            "UPDATE frontier SET next_attempt_at = '9999' WHERE url != 'https://blocker.example/3'"
+        )
+    await process_one(s, conn, ok)
+    assert host()["consecutive_errors"] == 0

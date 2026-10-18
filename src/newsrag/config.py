@@ -47,6 +47,11 @@ class FetchSettings(_Section):
     retry_base_s: float = 60.0  # retry n waits retry_base_s * 4**(n-1), +-20% jitter
     max_retry_after_s: int = 21600  # cap on a server's Retry-After
     reservation_slack_s: float = 30.0  # host/feed reservation = 2 x timeout + this
+    # A host answering 403 repeatedly has blocked us: back off the whole host instead
+    # of trying its URLs one by one (see politeness.blocked_backoff_s).
+    block_streak_threshold: int = 2
+    block_backoff_start_s: float = 3600.0
+    block_backoff_max_s: float = 86400.0
 
 
 class PollSettings(_Section):

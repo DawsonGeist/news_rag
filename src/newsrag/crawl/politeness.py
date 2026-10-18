@@ -113,6 +113,18 @@ def decide_http_error(
     return RetryDecision(attempts < max_attempts, backoff, None, code)
 
 
+def blocked_backoff_s(streak: int, threshold: int, start_s: float, max_s: float) -> float | None:
+    """Host back-off after ``streak`` consecutive failures that include a 403.
+
+    One 403 can be a single forbidden page, so nothing happens below ``threshold``.
+    From there the pause doubles per further block, capped at ``max_s``: a host that
+    has blocked us is asked again rarely, never URL by URL at the crawl delay.
+    """
+    if streak < threshold:
+        return None
+    return float(min(max_s, start_s * 2 ** (streak - threshold)))
+
+
 def decide_transient(
     error_code: str, attempts: int, max_attempts: int, base_s: float, rng: random.Random
 ) -> RetryDecision:

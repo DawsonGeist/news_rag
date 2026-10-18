@@ -17,6 +17,7 @@ Times are UTC.
 | 13:15–13:45 | ProtonVPN (free tier) active after the reboot; crawler traffic went through it | Network errors 3.4% (the connection was unstable while the VPN was set up). The author turned the VPN off. 39 URLs that failed for good in this window were re-queued by hand; 38 failed again with 403 from the direct IP. **The 403s were not caused by the VPN:** they come from a few hosts that block regardless of IP (see below). |
 | from 13:39 | bhg.com, which served 51 pages overnight, started answering 403 | Likely rate-based bot protection reacting to the crawler on the home IP |
 | 13:58 | **Operator change:** contact address switched to `dawsonnewsrag@gmail.com`; graceful service restart | Planned config change, not a failure. The writer flushed before exit. |
+| 14:01 | **Operator change:** 403 handling deployed (host back-off on repeated blocks; daily `feeds pause-blocked` job); graceful restart; 54 blocking feeds paused right away | The fetcher stops knocking on hosts that block it. Paused feeds include Industry Dive's network (about 15 `*dive.com` feeds, 20/20 blocked, though biopharmadive passed vetting) and the Advance Local sites. |
 
 ## Hosts that block the crawler
 
@@ -25,7 +26,7 @@ Times are UTC.
 - **Full blockers:** forbes.com, thestreet.com, realclearinvestigations.com.
 - **Started blocking mid-soak:** bhg.com.
 
-All of them passed vetting, because sampling 3 to 5 articles didn't trigger their bot protection. The fetcher retries each 403 once and keeps trying the host's other URLs at the crawl delay, so it keeps knocking on a door that has said no. See the open follow-up in the review.
+All of them passed vetting, because sampling 3 to 5 articles didn't trigger their bot protection. Until the fix, the fetcher retried each 403 once and kept trying the host's other URLs at the crawl delay. Fixed mid-soak (see Events): repeated 403s now back off the whole host (1 h, doubling, up to 24 h), and feeds whose article fetches are at least 80% blocked over 7 days get paused daily.
 
 ## Notes for the review
 

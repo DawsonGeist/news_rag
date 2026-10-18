@@ -20,6 +20,9 @@ robots_ttl_s = 86400
 retry_base_s = 60.0
 max_retry_after_s = 21600
 reservation_slack_s = 30.0
+block_streak_threshold = 2
+block_backoff_start_s = 3600.0
+block_backoff_max_s = 86400.0
 
 [poll]
 min_interval_s = 300

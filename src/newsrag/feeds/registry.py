@@ -16,7 +16,7 @@ import json
 import sqlite3
 from collections.abc import Iterable
 from dataclasses import dataclass
-from datetime import datetime
+from datetime import datetime, timedelta
 from pathlib import Path
 
 import yaml
@@ -101,6 +101,58 @@ def import_candidates(
             else:
                 stats.feeds_new += 1
     return stats
+
+
+@dataclass(frozen=True)
+class BlockedFeed:
+    feed_id: str
+    feed_url: str
+    fetches: int
+    blocked: int
+
+
+def find_blocked_feeds(
+    conn: sqlite3.Connection,
+    now: datetime,
+    window: timedelta = timedelta(days=7),
+    min_fetches: int = 10,
+    min_ratio: float = 0.8,
+) -> list[BlockedFeed]:
+    """Active feeds whose article fetches in ``window`` were mostly answered 403: the
+    publisher blocks the crawler, so polling the feed only produces URLs we must not
+    keep requesting. ``min_fetches`` keeps one bad afternoon from pausing a feed."""
+    rows = conn.execute(
+        "SELECT f.feed_id, f.feed_url, count(*) AS n, "
+        "sum(e.error_code = 'http_403') AS blocked "
+        "FROM stage_events e JOIN feeds f ON f.feed_id = e.feed_id "
+        "WHERE e.stage = 'fetch' AND e.finished_at >= ? AND f.status = 'active' "
+        "GROUP BY f.feed_id HAVING n >= ? AND 1.0 * blocked / n >= ? ORDER BY f.feed_url",
+        (to_db(now - window), min_fetches, min_ratio),
+    ).fetchall()
+    return [BlockedFeed(r[0], r[1], r[2], r[3]) for r in rows]
+
+
+def pause_blocked_feeds(
+    conn: sqlite3.Connection,
+    now: datetime,
+    window: timedelta = timedelta(days=7),
+    min_fetches: int = 10,
+    min_ratio: float = 0.8,
+) -> list[BlockedFeed]:
+    """Pause the feeds ``find_blocked_feeds`` reports, recording the evidence. ``paused``
+    is operational, not a verdict: the feed stays out of polling until a human decides
+    (``feeds set-status``), and ``feeds report --list paused`` shows them."""
+    found = find_blocked_feeds(conn, now, window, min_fetches, min_ratio)
+    with transaction(conn):
+        for b in found:
+            _set_status(
+                conn,
+                [b.feed_id],
+                "paused",
+                f"blocked: {b.blocked}/{b.fetches} article fetches answered 403",
+                now,
+            )
+    return found
 
 
 def resolve_feed(conn: sqlite3.Connection, feed_ref: str) -> str | None:
