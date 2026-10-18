@@ -96,6 +96,51 @@ def feeds_candidates(
     typer.echo(f"wrote {out}")
 
 
+@feeds_app.command("import")
+def feeds_import(
+    path: Path = typer.Option(FEEDS_DIR / "candidates_us.yaml"),
+) -> None:
+    """Load feed candidates into the crawl-state DB (idempotent; keeps statuses)."""
+    from newsrag.feeds.registry import import_candidates, load_candidates
+    from newsrag.storage.state import connect, init_schema
+    from newsrag.timeutil import utcnow
+
+    settings = load_settings()
+    conn = connect(settings.state_db)
+    init_schema(conn)
+    stats = import_candidates(conn, load_candidates(path), utcnow())
+    conn.close()
+    typer.echo(
+        f"sources new {stats.sources_new}; feeds new {stats.feeds_new}, "
+        f"updated {stats.feeds_updated}"
+    )
+
+
+@feeds_app.command("set-status")
+def feeds_set_status(
+    status: str = typer.Argument(..., help="candidate | active | review | rejected | paused"),
+    feeds: list[str] = typer.Argument(..., help="Feed URLs or feed_ids."),
+    reason: str = typer.Option("manual", help="Recorded in feeds.status_reason."),
+) -> None:
+    """Set feed status by hand. The vetter (P1.5) sets it automatically."""
+    from newsrag.feeds.registry import resolve_feed, set_status
+    from newsrag.storage.state import connect
+    from newsrag.timeutil import utcnow
+
+    settings = load_settings()
+    conn = connect(settings.state_db)
+    ids_ = []
+    for ref in feeds:
+        fid = resolve_feed(conn, ref)
+        if fid is None:
+            typer.echo(f"unknown feed: {ref} (run `newsrag feeds import` first?)", err=True)
+            raise typer.Exit(1)
+        ids_.append(fid)
+    n = set_status(conn, ids_, status, reason, utcnow())
+    conn.close()
+    typer.echo(f"{n} feeds set to {status}")
+
+
 @db_app.command("init")
 def db_init() -> None:
     """Create the crawl-state database (idempotent)."""
@@ -130,13 +175,21 @@ def storage_verify(
 @test_app.command("kill")
 def test_kill(
     iterations: int = typer.Option(20),
-    kills: int = typer.Option(2, help="SIGKILLs per iteration before the final run."),
+    kills: int = typer.Option(3, help="SIGKILLs per iteration."),
     seed: int | None = typer.Option(None),
+    storage_only: bool = typer.Option(
+        False, help="Only the storage workload (fast), not the full `run all` pipeline."
+    ),
 ) -> None:
-    """SIGKILL the storage workload at random moments, restart it, check invariants (G1.4)."""
-    from newsrag.testing.killtest import run_kill_test
+    """SIGKILL the pipeline at random moments, restart it, check invariants (G1.4)."""
+    if storage_only:
+        from newsrag.testing.killtest import run_kill_test
 
-    failures = run_kill_test(iterations, kills, seed)
+        failures = run_kill_test(iterations, kills, seed)
+    else:
+        from newsrag.testing.pipeline_killtest import run_pipeline_kill_test
+
+        failures = run_pipeline_kill_test(iterations, kills, seed)
     for f in failures:
         typer.echo(f)
     typer.echo(f"{iterations - len(failures)}/{iterations} iterations passed")
@@ -175,6 +228,50 @@ def run_fetcher_cmd() -> None:
 
     asyncio.run(main())
     conn.close()
+
+
+@run_app.command("poller")
+def run_poller_cmd() -> None:
+    """Poll active feeds until SIGTERM/SIGINT, then finish in-flight polls."""
+    import asyncio
+    import signal
+
+    from newsrag.crawl.poller import run_poller
+    from newsrag.storage.state import connect, init_schema
+
+    _setup_logging()
+    settings = load_settings()
+    conn = connect(settings.state_db)
+    init_schema(conn)
+
+    async def main() -> None:
+        stop = asyncio.Event()
+        loop = asyncio.get_running_loop()
+        for sig in (signal.SIGTERM, signal.SIGINT):
+            loop.add_signal_handler(sig, stop.set)
+        await run_poller(settings, conn, stop)
+
+    asyncio.run(main())
+    conn.close()
+
+
+@run_app.command("all")
+def run_all_cmd() -> None:
+    """Supervise poller, fetcher and writer; restart any that die (G1.2)."""
+    import signal
+
+    from newsrag.storage.state import connect, init_schema
+    from newsrag.supervisor import Supervisor, setup_supervisor_logging
+
+    settings = load_settings()
+    setup_supervisor_logging(settings.data_dir / "logs")
+    conn = connect(settings.state_db)
+    init_schema(conn)
+    conn.close()
+    sup = Supervisor(settings)
+    for sig in (signal.SIGTERM, signal.SIGINT):
+        signal.signal(sig, lambda *_: sup.stopping.set())
+    sup.run()
 
 
 @run_app.command("writer")

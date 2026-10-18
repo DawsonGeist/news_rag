@@ -2,6 +2,17 @@
 
 Newest first. Each entry records what was decided, why, and what would reopen it.
 
+## 2026-10-17: P1.4 poller and supervisor
+
+| Decision | Choice | Why | Revisit if |
+| --- | --- | --- | --- |
+| Shared politeness | Robots, redirects and host reservation moved to `crawl.http`, used by the fetcher and the poller. `hosts` is owned by that module. | A feed poll and an article fetch to the same host must not overlap | — |
+| Re-fetch trigger | Only the feed that first listed a URL can re-queue it | Titles differ between section feeds, so comparing across feeds would re-fetch endlessly | — |
+| Feed dates | Read without feedparser's `updated`→`published` alias. Atom `<updated>`-only entries use it as the publication time. | The alias made every publication time look like an update | — |
+| Writer startup | Reclaims **all** `extracting` rows, not just expired ones | The kill test found rows stranded when a writer restarted within the lease period | — |
+| Supervisor | Restart with doubling backoff; `PR_SET_PDEATHSIG` ties children to it; tmp sweep at start and stop | Found by the kill test: orphans after a supervisor kill, and stale tmp areas after a late child kill | — |
+| Reservation slack | `fetch.reservation_slack_s` (30 s), so the kill test can shrink it | A fixed 30 s made every killed poll stall the test | — |
+
 ## 2026-10-17: P1.3 extractor and writer loop
 
 | Decision | Choice | Why | Revisit if |

@@ -46,6 +46,7 @@ class FetchSettings(_Section):
     robots_ttl_s: int = 86400
     retry_base_s: float = 60.0  # retry n waits retry_base_s * 4**(n-1), +-20% jitter
     max_retry_after_s: int = 21600  # cap on a server's Retry-After
+    reservation_slack_s: float = 30.0  # host/feed reservation = 2 x timeout + this
 
 
 class PollSettings(_Section):
@@ -53,6 +54,7 @@ class PollSettings(_Section):
     default_interval_s: int = 1800
     max_interval_s: int = 21600
     pause_after_failures: int = 10
+    concurrency: int = 16  # feeds polled at once (still one request per host)
 
 
 def _default_extract_workers() -> int:

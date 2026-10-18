@@ -1,0 +1,20 @@
+<?xml version="1.0" encoding="utf-8"?>
+<feed xmlns="http://www.w3.org/2005/Atom">
+  <title>Riverside Weekly</title>
+  <id>urn:uuid:riverside-weekly</id>
+  <updated>2026-10-17T09:00:00Z</updated>
+  <entry>
+    <title>Farmers market moves indoors for winter</title>
+    <link rel="alternate" href="https://riverside.example/2026/10/farmers-market"/>
+    <id>urn:uuid:1</id>
+    <published>2026-10-17T09:00:00-04:00</published>
+    <updated>2026-10-17T10:15:00-04:00</updated>
+    <summary type="html">&lt;p&gt;The market will run Saturdays through March.&lt;/p&gt;</summary>
+  </entry>
+  <entry>
+    <title>Storm knocks out power</title>
+    <link rel="alternate" href="https://riverside.example/2026/10/storm"/>
+    <id>urn:uuid:2</id>
+    <updated>2026-10-13T22:10:00Z</updated>
+  </entry>
+</feed>

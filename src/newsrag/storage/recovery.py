@@ -68,12 +68,29 @@ def remove_uncommitted_table_files(conn: sqlite3.Connection, data_dir: Path) -> 
     return removed
 
 
+def reclaim_all_extracting(conn: sqlite3.Connection, now: datetime) -> int:
+    """Hand every ``extracting`` row back to ``fetched``, expired lease or not.
+
+    Only valid while holding the writer lock: there is exactly one writer, so any
+    ``extracting`` row seen at its startup belongs to a dead predecessor. Waiting for
+    the lease to lapse would strand those rows, because a writer restarted within
+    the lease period never looks again.
+    """
+    with transaction(conn):
+        cur = conn.execute(
+            "UPDATE frontier SET state = 'fetched', lease_owner = NULL, lease_expires_at = NULL, "
+            "next_attempt_at = ?, updated_at = ? WHERE state = 'extracting'",
+            (to_db(now), to_db(now)),
+        )
+        return cur.rowcount
+
+
 def recover_writer(conn: sqlite3.Connection, data_dir: Path, now: datetime) -> RecoveryReport:
     """Startup recovery for the storage writer. Caller holds the writer lock."""
     return RecoveryReport(
         tmp_removed=sweep_tmp(data_dir / "tmp"),
         table_files_removed=remove_uncommitted_table_files(conn, data_dir),
-        leases_reclaimed=reclaim_expired_leases(conn, "extracting", now),
+        leases_reclaimed=reclaim_all_extracting(conn, now),
     )
 
 

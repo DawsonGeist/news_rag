@@ -114,7 +114,7 @@ Every fetched page gets a Document, including paywalled and non-article pages. F
 
    Moving the file in under the write lock serializes it with retention's unlinks. A crash after the rename but before `COMMIT` leaves an orphan file, and orphans don't exist by rule 3.
 3. **The manifest decides what exists:** a file not listed in the manifest does not exist. Cleanup:
-   - **On startup:** delete the tmp areas whose lock is free (their process is dead). The storage writer also deletes table files with no `committed` row. Each component reclaims frontier rows whose lease expired in the states it owns: `fetching` belongs to the fetcher and `extracting` to the writer.
+   - **On startup:** delete the tmp areas whose lock is free (their process is dead). The storage writer also deletes table files with no `committed` row. Each component reclaims frontier rows in the states it owns. The fetcher reclaims `fetching` rows whose lease expired, at startup and every minute, because several fetchers may run. The writer reclaims **every** `extracting` row at startup, expired or not: it holds the single-writer lock, so any such row belongs to a dead predecessor.
    - **Daily, with retention:** delete blob files whose row is `expired` or missing. This walks all of `raw/`, so it doesn't run at startup.
 4. **Retention:** mark the row expired in a transaction first. Then unlink the file inside a write transaction that re-checks that the row is still not `present`.
 

@@ -1,0 +1,6 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<rss version="2.0"><channel>
+<title>Undated Gazette</title><link>https://undated.example/</link><description>No dates here.</description>
+<item><title>First story</title><link>https://undated.example/first</link></item>
+<item><title>Second story</title><link>https://undated.example/second</link></item>
+</channel></rss>

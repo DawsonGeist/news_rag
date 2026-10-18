@@ -15,7 +15,8 @@ import pytest
 
 from newsrag import ids
 from newsrag.config import FetchSettings, Settings
-from newsrag.crawl.fetcher import Fetcher, claim_fetch_batch, host_of, make_client
+from newsrag.crawl.fetcher import Fetcher, claim_fetch_batch
+from newsrag.crawl.http import host_of, make_client
 from newsrag.storage.blobs import BlobStore
 from newsrag.storage.fsio import TmpArea
 from newsrag.storage.state import connect, init_schema, transaction

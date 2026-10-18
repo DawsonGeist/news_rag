@@ -101,18 +101,30 @@ stored ──feed reports update──▶ pending (low priority re-fetch)
 
 ### 2. Feed poller
 
-- Single asyncio process that polls feeds where `status='active' AND next_poll_at <= now`.
+- Single asyncio process (`newsrag run poller`) that polls feeds where `status='active' AND next_poll_at <= now`, up to `poll.concurrency` (16) at once.
+- **Claiming:** at most one feed per host. The claim reserves the host, as the fetcher does, and pushes the feed's `next_poll_at` past the longest possible poll. A crashed poller's claim lapses on its own.
 - **Conditional GET** with the stored `etag` and `last_modified`. A `304` counts as a successful poll with no new items.
 - **Adaptive interval:** a poll that finds new items multiplies the interval by 0.7. A poll with nothing new multiplies it by 1.5. The result is clamped to [5 min, 6 h], and the first interval is 30 min. Each `next_poll_at` gets ±10% jitter so polls don't synchronize.
-- Feed hosts use the same per-host politeness as articles (the `hosts` table).
+- Feed hosts use the same per-host politeness as articles, through `crawl.http`: robots.txt on every redirect hop, and one request per host shared with the fetcher.
+- **Parsing:** feedparser. Links resolve against the feed URL, and FeedBurner's `origLink` is preferred over its tracking redirect. A response with no entries and no feed version (an HTML page) is `unparseable`. Item dates are read without feedparser's `updated`→`published` aliasing. An Atom entry with only `<updated>` uses it as the publication time. Dates more than a day in the future are dropped.
 - **For each item:**
   - normalize the link
   - compute `url_id`
   - `INSERT ... ON CONFLICT DO NOTHING` into `frontier` with `state='pending'` and the feed's title, summary, published and updated hints
   - insert into `url_sightings`
   - write a `discover` stage event for new URLs only
-- If an existing stored URL's feed `updated` timestamp moves forward or its title changes, the row is re-queued at low priority (the revision policy).
-- After `pause_after_failures` (10) consecutive failures, the feed is set to `paused` with a reason.
+- If an existing stored URL's feed `updated` timestamp moves forward or its title changes, the row is re-queued at low priority (`priority = -1`; the revision policy). Only **the feed that first listed the URL** counts. Section feeds often abbreviate headlines, and comparing titles across feeds would re-fetch the same article forever.
+- After `pause_after_failures` (10) consecutive failures, the feed is set to `paused` with a reason. A 429 or 503 pushes the next poll past `Retry-After` and backs off the whole host.
+- Each poll appends to `feed_polls`. Its feed state, frontier inserts, sightings, discover events and host release commit in one transaction.
+
+### Supervisor
+
+`newsrag run all` runs the poller, fetcher and writer as child processes:
+- A child that exits for any reason other than shutdown is restarted. The delay doubles with each crash in the last 10 minutes, from 1 s up to 60 s.
+- SIGTERM stops all children gracefully (90 s, so the writer can flush), then SIGKILLs any that remain.
+- Children are tied to the supervisor with `PR_SET_PDEATHSIG`. If the supervisor dies, they die too, rather than running on as orphans beside a new supervisor.
+- Logs go to `logs/<component>.log`. Starts, exits and restarts go to `logs/supervisor.log`, which is the G1.2 evidence.
+- The supervisor sweeps dead processes' tmp areas when it starts and after it stops.
 
 ### 3. Article fetcher
 
@@ -205,7 +217,7 @@ Synthetic fixtures (`tests/fixtures/synthetic/articles/`, with `expected.yaml`) 
   - article HTML: a full article, a paywall, a non-article page, a JSON-LD date, a meta-only date and a cross-site canonical
 - **Golden fixtures** (local only, `tests/fixtures/golden/`, gitignored for copyright): about 40 real pages across 20 publishers, each with a hand-checked expected title, date, content kind and first and last paragraph. `newsrag fixtures capture <url>` politely fetches a page and pre-fills `case.yaml` from the extractor, marked `verified: false`. A human corrects it and sets `verified: true`. `newsrag fixtures refill` re-fills unverified cases after an extractor fix, and `newsrag fixtures report` prints the G1.5 metrics over verified cases only.
 - **Integration tests:** the full poll → fetch → extract → store path against a local HTTP server (`respx` or a `pytest` fixture server) serving the synthetic fixtures.
-- **Kill test** (`newsrag test kill`): 20 iterations. Each starts the pipeline against the local fixture server and `SIGKILL`s a random process at a random moment. It then restarts and checks the invariants:
+- **Kill test** (`newsrag test kill`): 20 iterations. Each serves two synthetic feeds and their articles from local HTTP servers on two loopback hosts, starts `newsrag run all`, and `SIGKILL`s a random process (a child or the supervisor) at random moments, 3 times by default. It waits for the pipeline to settle, stops it cleanly, and checks the invariants. `--storage-only` runs the faster storage-layer workload instead. The invariants are:
   - every `committed` file exists and matches its sha256
   - every `doc_revisions` row points at a committed file that contains it
   - there are no duplicate `(doc_id, revision)` pairs
@@ -237,7 +249,7 @@ Gates 2 and 3 are outlined here and get detailed in their own design docs:
 2. **P1.1** (done): blob store, table-file writer, recovery, plus their unit tests and kill-test harness. Everything else commits through this, so it comes first.
 3. **P1.2** (done): fetcher with robots.txt and politeness, tested against mock transports and a local HTTP server.
 4. **P1.3** (done): extractor, the writer's extraction loop, synthetic fixtures, and the golden-fixture tooling. Verifying the golden cases is a human task, ongoing until Gate 1.
-5. **P1.4:** poller and the supervisor (`run all`).
+5. **P1.4** (done): poller, supervisor (`run all`), feed import and status commands, and the full-pipeline kill test.
 6. **P1.5:** vetter stages B and C, reusing the fetcher and extractor. Run it on all 9,069 text candidates.
 7. **P1.6:** lag and disk reports, compaction and retention jobs.
 8. **P1.7:** the 72 h soak, the power-pull test and the Gate 1 review.

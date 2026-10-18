@@ -67,7 +67,8 @@ CREATE TABLE IF NOT EXISTS feed_polls (
     PRIMARY KEY (feed_id, polled_at)
 ) STRICT;
 
--- Per-host politeness and robots cache. Owner: fetcher (the poller reads it for feed hosts).
+-- Per-host politeness and robots cache. Owner: crawl politeness (newsrag.crawl.http),
+-- shared by the fetcher and the poller so one request per host holds across both.
 CREATE TABLE IF NOT EXISTS hosts (
     host               TEXT PRIMARY KEY,    -- e.g. 'www.foxnews.com'
     robots_txt         TEXT,

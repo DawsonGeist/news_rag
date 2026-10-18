@@ -1,16 +1,7 @@
 """Component 3, article fetcher: frontier ``pending`` -> ``fetching`` -> ``fetched``.
 
-Owner of the ``hosts`` table and of those frontier transitions.
-
-**One request in flight per host, across processes.** Claiming a URL reserves its
-host: ``hosts.next_allowed_at`` is pushed to ``now + reservation`` inside the claim
-transaction, where the reservation outlasts the longest possible fetch (robots.txt
-plus the page, each bounded by the request timeout). No other claim, in this
-process or another fetcher, can pick that host until the fetch finishes and sets
-``next_allowed_at = finished + crawl_delay``. A crashed fetcher's reservation simply
-lapses. No extra columns or locks are needed.
-
-Redirects are followed by hand so that robots.txt is checked on every hop.
+Owner of those frontier transitions. Politeness (host reservation, robots.txt on
+every redirect hop, body limits) lives in ``crawl.http`` and is shared with the poller.
 """
 
 from __future__ import annotations
@@ -22,14 +13,20 @@ import random
 import sqlite3
 from dataclasses import dataclass
 from datetime import datetime, timedelta
-from urllib.parse import urljoin, urlsplit
 
 import httpx
 
-from newsrag import ids
-from newsrag.config import ROBOTS_AGENT, Settings
+from newsrag.config import Settings
 from newsrag.contracts.v1 import Stage, StageStatus
 from newsrag.crawl import politeness as pol
+from newsrag.crawl.http import (
+    HOST_READY_SQL,
+    GetResult,
+    PoliteClient,
+    make_client,
+    release_host,
+    reserve_host,
+)
 from newsrag.obs.events import new_event, record, worker_id
 from newsrag.storage.blobs import BlobStore, StagedBlob
 from newsrag.storage.fsio import TmpArea, sweep_tmp
@@ -40,7 +37,6 @@ from newsrag.timeutil import from_db, to_db, utcnow
 log = logging.getLogger(__name__)
 
 PIPELINE_VERSION = "fetcher-1"
-ROBOTS_MAX_BYTES = 500_000  # RFC 9309 asks crawlers to parse at least 500 KiB
 
 
 @dataclass(frozen=True)
@@ -69,21 +65,6 @@ class FetchOutcome:
     network_error: bool = False
 
 
-@dataclass(frozen=True)
-class _HttpError:
-    status: int
-    retry_after_s: float | None
-
-
-def host_of(url: str) -> str:
-    return (urlsplit(url).hostname or "").lower()
-
-
-def _reservation_s(settings: Settings) -> float:
-    # robots.txt and the page each get one timeout; slack covers commit time.
-    return 2 * settings.fetch.request_timeout_s + 30
-
-
 def claim_fetch_batch(
     conn: sqlite3.Connection, settings: Settings, worker: str, limit: int, now: datetime
 ) -> list[FetchClaim]:
@@ -92,7 +73,6 @@ def claim_fetch_batch(
         return []
     n = to_db(now)
     lease = to_db(now + timedelta(seconds=settings.fetch.lease_s))
-    reserved = to_db(now + timedelta(seconds=_reservation_s(settings)))
     with transaction(conn):
         # One candidate per host; hosts that are reserved or backing off are excluded.
         rows = conn.execute(
@@ -100,18 +80,12 @@ def claim_fetch_batch(
             "  SELECT f.*, row_number() OVER ("
             "    PARTITION BY f.host ORDER BY f.priority DESC, f.next_attempt_at) AS rn"
             "  FROM frontier f LEFT JOIN hosts h ON h.host = f.host"
-            "  WHERE f.state = 'pending' AND f.next_attempt_at <= ?"
-            "    AND (h.next_allowed_at IS NULL OR h.next_allowed_at <= ?)"
-            "    AND (h.backoff_until IS NULL OR h.backoff_until <= ?)"
-            ") WHERE rn = 1 ORDER BY priority DESC, next_attempt_at LIMIT ?",
-            (n, n, n, limit),
+            f"  WHERE f.state = 'pending' AND f.next_attempt_at <= :now AND {HOST_READY_SQL}"
+            ") WHERE rn = 1 ORDER BY priority DESC, next_attempt_at LIMIT :limit",
+            {"now": n, "limit": limit},
         ).fetchall()
         for r in rows:
-            conn.execute(
-                "INSERT INTO hosts (host, crawl_delay_s, next_allowed_at) VALUES (?, ?, ?) "
-                "ON CONFLICT (host) DO UPDATE SET next_allowed_at = excluded.next_allowed_at",
-                (r["host"], settings.fetch.default_crawl_delay_s, reserved),
-            )
+            reserve_host(conn, settings, r["host"], now)
             conn.execute(
                 "UPDATE frontier SET state = 'fetching', lease_owner = ?, lease_expires_at = ?, "
                 "attempts = attempts + 1, updated_at = ? WHERE url_id = ?",
@@ -143,7 +117,7 @@ class Fetcher:
         self.s = settings
         self.conn = conn
         self.blobs = BlobStore(settings.data_dir, tmp)
-        self.client = client
+        self.http = PoliteClient(settings, conn, client)
         self.worker = worker
         self.rng = rng or random.Random()
 
@@ -199,7 +173,7 @@ class Fetcher:
     async def process(self, claim: FetchClaim) -> None:
         started = utcnow()
         try:
-            async with asyncio.timeout(_reservation_s(self.s) - 30):
+            async with asyncio.timeout(2 * self.s.fetch.request_timeout_s):
                 outcome = await self.fetch(claim)
         except TimeoutError:
             outcome = self._transient(claim, "timeout", network=True)
@@ -222,33 +196,45 @@ class Fetcher:
         )
 
     async def fetch(self, claim: FetchClaim) -> FetchOutcome:
-        url = claim.url
-        for _ in range(self.s.fetch.max_redirects + 1):
-            verdict = await self.robots_check(url)
-            if verdict == "disallow":
+        return self.classify(claim, await self.http.get(claim.url))
+
+    def classify(self, claim: FetchClaim, res: GetResult) -> FetchOutcome:
+        """Map an HTTP result to the article fetcher's retry policy."""
+        url = res.final_url
+        match res.kind:
+            case "ok":
+                return FetchOutcome(
+                    "fetched",
+                    final_url=url,
+                    http_status=res.status,
+                    content_type=res.content_type,
+                    body=res.body,
+                )
+            case "disallowed":
                 return FetchOutcome("skipped", final_url=url, skip_reason="robots")
-            if verdict == "unavailable":
+            case "content_type" | "too_large":
+                return FetchOutcome(
+                    "skipped",
+                    final_url=url,
+                    http_status=res.status,
+                    content_type=res.content_type,
+                    skip_reason=res.kind,
+                )
+            case "robots_unavailable":
                 out = self._transient(claim, "robots_unavailable")
                 out.host_backoff_s = out.delay_s  # don't re-ask for every URL on the host
                 return out
-            try:
-                result = await self._get(url)
-            except httpx.TimeoutException:
-                return self._transient(claim, "timeout", network=True)
-            except httpx.TransportError as e:
-                return self._transient(claim, f"network:{type(e).__name__}", network=True)
-            if isinstance(result, str):  # a redirect target
-                try:
-                    url = ids.normalize_url(result)
-                except ids.InvalidURL:
-                    return FetchOutcome("failed", final_url=url, error_code="bad_redirect")
-                continue
-            if isinstance(result, _HttpError):
+            case "timeout" | "network":
+                return self._transient(claim, res.error or res.kind, network=True)
+            case "bad_redirect" | "too_many_redirects":
+                return FetchOutcome("failed", final_url=url, error_code=res.kind)
+            case "http_error" | "not_modified":
+                status = res.status or 0
                 d = pol.decide_http_error(
-                    result.status,
+                    status,
                     claim.attempts,
                     self.s.fetch.max_attempts,
-                    result.retry_after_s,
+                    res.retry_after_s,
                     self.s.fetch.retry_base_s,
                     self.s.fetch.max_retry_after_s,
                     self.rng,
@@ -256,88 +242,12 @@ class Fetcher:
                 return FetchOutcome(
                     "retry" if d.retry else "failed",
                     final_url=url,
-                    http_status=result.status,
+                    http_status=status,
                     error_code=d.error_code,
                     delay_s=d.delay_s,
                     host_backoff_s=d.host_backoff_s,
-                    network_error=result.status >= 500,
+                    network_error=status >= 500,
                 )
-            result.final_url = url
-            return result
-        return FetchOutcome("failed", final_url=url, error_code="too_many_redirects")
-
-    async def _get(self, url: str) -> FetchOutcome | _HttpError | str:
-        """One GET: an outcome, an HTTP error to classify, or the absolute redirect target."""
-        max_bytes = self.s.fetch.max_body_bytes
-        async with self.client.stream("GET", url) as r:
-            if r.status_code in pol.REDIRECT_STATUSES and "location" in r.headers:
-                return urljoin(url, r.headers["location"])
-            if not 200 <= r.status_code < 300:
-                return _HttpError(
-                    r.status_code, pol.parse_retry_after(r.headers.get("retry-after"), utcnow())
-                )
-            ctype = r.headers.get("content-type")
-            base = FetchOutcome("skipped", http_status=r.status_code, content_type=ctype)
-            if not pol.is_html(ctype):
-                base.skip_reason = "content_type"
-                return base
-            declared = r.headers.get("content-length", "")
-            if declared.isdigit() and int(declared) > max_bytes:
-                base.skip_reason = "too_large"
-                return base
-            body = bytearray()
-            # Decoded bytes are counted, so a small gzip bomb is caught too.
-            async for chunk in r.aiter_bytes():
-                body += chunk
-                if len(body) > max_bytes:
-                    base.skip_reason = "too_large"
-                    return base
-            base.kind = "fetched"
-            base.body = bytes(body)
-            return base
-
-    async def robots_check(self, url: str) -> pol.RobotsVerdict:
-        host = host_of(url)
-        row = self.conn.execute(
-            "SELECT robots_txt, robots_status, robots_fetched_at FROM hosts WHERE host = ?",
-            (host,),
-        ).fetchone()
-        now = utcnow()
-        if row is not None and row["robots_fetched_at"] is not None:
-            definitive = row["robots_status"] is not None and 200 <= row["robots_status"] < 500
-            # An unavailable robots.txt is re-asked at the next retry, not cached for a day.
-            ttl = self.s.fetch.robots_ttl_s if definitive else self.s.fetch.retry_base_s
-            if now - from_db(row["robots_fetched_at"]) < timedelta(seconds=ttl):
-                return pol.robots_verdict(
-                    row["robots_status"], row["robots_txt"], url, ROBOTS_AGENT
-                )
-        status, text = await self._fetch_robots(url)
-        delay = pol.effective_crawl_delay(
-            pol.robots_crawl_delay(status, text, ROBOTS_AGENT),
-            self.s.fetch.default_crawl_delay_s,
-            self.s.fetch.max_crawl_delay_s,
-        )
-        with transaction(self.conn):
-            self.conn.execute(
-                "INSERT INTO hosts (host, robots_txt, robots_status, robots_fetched_at, "
-                "crawl_delay_s) VALUES (?, ?, ?, ?, ?) ON CONFLICT (host) DO UPDATE SET "
-                "robots_txt = excluded.robots_txt, robots_status = excluded.robots_status, "
-                "robots_fetched_at = excluded.robots_fetched_at, "
-                "crawl_delay_s = excluded.crawl_delay_s",
-                (host, text, status, to_db(now), delay),
-            )
-        return pol.robots_verdict(status, text, url, ROBOTS_AGENT)
-
-    async def _fetch_robots(self, url: str) -> tuple[int, str | None]:
-        parts = urlsplit(url)
-        robots_url = f"{parts.scheme}://{parts.netloc}/robots.txt"
-        try:
-            r = await self.client.get(robots_url, follow_redirects=True)
-        except httpx.HTTPError as e:
-            log.info("robots.txt unreachable for %s: %s %s", parts.netloc, type(e).__name__, e)
-            return pol.ROBOTS_NETWORK_ERROR, None
-        text = r.content[:ROBOTS_MAX_BYTES].decode("utf-8", errors="replace")
-        return r.status_code, text if 200 <= r.status_code < 300 else None
 
     # --- commit -------------------------------------------------------------------------
 
@@ -382,12 +292,12 @@ class Fetcher:
                 log.warning("lost lease on %s; dropping result", claim.url_id)
                 if staged is not None:
                     staged.tmp_path.unlink(missing_ok=True)
-                self._release_host(claim.host, now, out)
+                self._release(claim.host, now, out)
                 return
             if staged is not None:
                 expires = now + timedelta(days=self.s.retention.raw_days)
                 self.blobs.commit(self.conn, staged, now, expires)
-            self._release_host(claim.host, now, out)
+            self._release(claim.host, now, out)
             status = {
                 "fetched": StageStatus.OK,
                 "retry": StageStatus.RETRY,
@@ -414,39 +324,15 @@ class Fetcher:
                 ],
             )
 
-    def _release_host(self, host: str, now: datetime, out: FetchOutcome) -> None:
-        """End the reservation: the host is next allowed one crawl delay from now."""
-        row = self.conn.execute(
-            "SELECT crawl_delay_s FROM hosts WHERE host = ?", (host,)
-        ).fetchone()
-        delay = row["crawl_delay_s"] if row else self.s.fetch.default_crawl_delay_s
-        backoff = (
-            to_db(now + timedelta(seconds=out.host_backoff_s))
-            if out.host_backoff_s is not None
-            else None
+    def _release(self, host: str, now: datetime, out: FetchOutcome) -> None:
+        release_host(
+            self.conn,
+            self.s,
+            host,
+            now,
+            network_error=out.network_error,
+            backoff_s=out.host_backoff_s,
         )
-        self.conn.execute(
-            "UPDATE hosts SET next_allowed_at = ?, "
-            "backoff_until = coalesce(?, backoff_until), "
-            "consecutive_errors = CASE WHEN ? THEN consecutive_errors + 1 ELSE 0 END "
-            "WHERE host = ?",
-            (to_db(now + timedelta(seconds=delay)), backoff, out.network_error, host),
-        )
-
-
-def make_client(settings: Settings) -> httpx.AsyncClient:
-    """The one HTTP client configuration every fetch uses. Redirects are handled by
-    ``Fetcher.fetch`` so robots.txt is checked on every hop."""
-    return httpx.AsyncClient(
-        http2=True,
-        follow_redirects=False,
-        timeout=httpx.Timeout(settings.fetch.request_timeout_s),
-        headers={"User-Agent": settings.user_agent, "From": settings.contact_email},
-        limits=httpx.Limits(
-            max_connections=settings.fetch.global_concurrency,
-            max_keepalive_connections=min(32, settings.fetch.global_concurrency),
-        ),
-    )
 
 
 async def run_fetcher(settings: Settings, conn: sqlite3.Connection, stop: asyncio.Event) -> None:

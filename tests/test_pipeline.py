@@ -16,7 +16,8 @@ import yaml
 from newsrag import ids
 from newsrag.config import FetchSettings, Settings, WriterSettings
 from newsrag.contracts.v1 import ContentKind
-from newsrag.crawl.fetcher import Fetcher, host_of
+from newsrag.crawl.fetcher import Fetcher
+from newsrag.crawl.http import host_of
 from newsrag.storage.blobs import BlobStore
 from newsrag.storage.fsio import TmpArea
 from newsrag.storage.recovery import verify_storage

@@ -28,7 +28,8 @@ import yaml
 from newsrag import ids
 from newsrag.config import REPO_ROOT, Settings
 from newsrag.contracts.v1 import ContentKind, Document
-from newsrag.crawl.fetcher import FetchClaim, Fetcher, host_of, make_client
+from newsrag.crawl.fetcher import FetchClaim, Fetcher
+from newsrag.crawl.http import host_of, make_client
 from newsrag.extract.extractor import ExtractContext, extract
 from newsrag.storage.fsio import TmpArea
 from newsrag.storage.state import connect, init_schema

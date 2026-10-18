@@ -47,6 +47,10 @@ newsrag = ["py.typed", "contracts/v1/sql/*.sql"]
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 asyncio_mode = "auto"
+filterwarnings = [
+    # Inside the third-party tld package (via trafilatura's courlan); not our code.
+    "ignore:codecs.open\\(\\) is deprecated:DeprecationWarning:tld.*",
+]
 
 [tool.ruff]
 line-length = 100
@@ -67,5 +71,5 @@ mypy_path = "src"
 
 # These ship no usable type information; their values are typed Any at our boundary.
 [[tool.mypy.overrides]]
-module = ["pyarrow", "pyarrow.*", "lxml", "lxml.*", "py3langid", "py3langid.*"]
+module = ["pyarrow", "pyarrow.*", "lxml", "lxml.*", "py3langid", "py3langid.*", "feedparser"]
 ignore_missing_imports = true

@@ -1,0 +1,30 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<rss version="2.0" xmlns:feedburner="http://rssnamespace.org/feedburner/ext/1.0">
+<channel>
+<title>The Millbrook Ledger - News</title>
+<link>https://millbrookledger.example/</link>
+<description>Local news from Millbrook.</description>
+<item>
+  <title>Millbrook council approves solar farm</title>
+  <link>https://millbrookledger.example/news/solar-farm-approved?utm_source=rss</link>
+  <description>&lt;p&gt;The council voted five to two on Thursday night.&lt;/p&gt;</description>
+  <pubDate>Fri, 16 Oct 2026 18:30:00 -0400</pubDate>
+</item>
+<item>
+  <title>River cleanup draws hundreds</title>
+  <link>/news/river-cleanup</link>
+  <description>More than three hundred volunteers turned out.</description>
+  <pubDate>Fri, 16 Oct 2026 08:30:00 GMT</pubDate>
+</item>
+<item>
+  <title>Library extends weekend hours</title>
+  <link>http://feeds.proxy.example/~r/ledger/~3/abc123/</link>
+  <feedburner:origLink>https://millbrookledger.example/2026/10/15/library-hours</feedburner:origLink>
+  <pubDate>Thu, 15 Oct 2026 12:00:00 GMT</pubDate>
+</item>
+<item>
+  <title>An item with a broken link</title>
+  <link>javascript:void(0)</link>
+</item>
+</channel>
+</rss>

@@ -1,0 +1,10 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<rss version="2.0"><channel>
+<title>Ledger Daily Podcast</title><link>https://millbrookledger.example/podcast</link><description>Audio.</description>
+<item>
+  <title>Episode 12: The solar vote</title>
+  <link>https://millbrookledger.example/podcast/12</link>
+  <enclosure url="https://cdn.audio.example/ledger/12.mp3" length="12345678" type="audio/mpeg"/>
+  <pubDate>Fri, 16 Oct 2026 23:00:00 GMT</pubDate>
+</item>
+</channel></rss>
