@@ -137,6 +137,21 @@ def test_parse_atom_and_undated_and_podcast() -> None:
     assert pod.audio_items == 1
 
 
+def test_audio_counted_only_over_kept_items() -> None:
+    # Podcast entries without a usable link must not push the audio ratio above 1.
+    body = (
+        (FEEDS / "podcast.xml")
+        .read_bytes()
+        .replace(
+            b"</channel>",
+            b'<item><title>No link</title><enclosure url="https://cdn.audio.example/x.mp3" '
+            b'type="audio/mpeg"/></item></channel>',
+        )
+    )
+    feed = parse_feed(body, "https://millbrookledger.example/p", None, NOW)
+    assert (len(feed.items), feed.audio_items, feed.invalid_links) == (1, 1, 1)
+
+
 def test_parse_rejects_garbage() -> None:
     for ctype in ("text/html", None):
         with pytest.raises(ValueError):

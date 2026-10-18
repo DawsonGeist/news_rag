@@ -117,8 +117,6 @@ def parse_feed(body: bytes, feed_url: str, content_type: str | None, now: dateti
     )
     out = ParsedFeed(fmt)
     for e in parsed.entries:
-        if any(str(enc.get("type", "")).startswith("audio/") for enc in e.get("enclosures", [])):
-            out.audio_items += 1
         link = _item_link(e, feed_url)
         try:
             url = ids.normalize_url(link) if link else None
@@ -127,6 +125,9 @@ def parse_feed(body: bytes, feed_url: str, content_type: str | None, now: dateti
         if url is None:
             out.invalid_links += 1
             continue
+        # Counted over kept items only, so audio_items <= len(items) (a ratio of them).
+        if any(str(enc.get("type", "")).startswith("audio/") for enc in e.get("enclosures", [])):
+            out.audio_items += 1
         summary = e.get("summary")
         # dict.get bypasses FeedParserDict's key aliasing, which silently answers
         # updated_parsed with the published date. An entry with only <updated> (allowed
