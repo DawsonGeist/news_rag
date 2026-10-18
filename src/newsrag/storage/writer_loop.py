@@ -29,7 +29,7 @@ import sqlite3
 import threading
 import time
 from collections.abc import Callable
-from concurrent.futures import FIRST_COMPLETED, Future, ProcessPoolExecutor, wait
+from concurrent.futures import FIRST_COMPLETED, Future, wait
 from concurrent.futures.process import BrokenProcessPool
 from dataclasses import dataclass
 from datetime import datetime, timedelta
@@ -39,6 +39,7 @@ from newsrag.config import Settings
 from newsrag.contracts.v1 import Document
 from newsrag.extract.extractor import ExtractContext, ExtractFailure, extract
 from newsrag.obs.events import worker_id
+from newsrag.procutil import owned_pool
 from newsrag.storage.blobs import BlobStore
 from newsrag.storage.fsio import ProcessLock, TmpArea
 from newsrag.storage.recovery import recover_writer
@@ -86,14 +87,15 @@ class _Pool:
     """A process pool plus the queue its workers report job starts on."""
 
     def __init__(self, workers: int) -> None:
-        mp = multiprocessing.get_context()
+        # spawn + PDEATHSIG (procutil): workers die with the writer, even on SIGKILL.
+        mp = multiprocessing.get_context("spawn")
         self.started = mp.SimpleQueue()
-        self.executor = ProcessPoolExecutor(
-            max_workers=workers,
-            mp_context=mp,
+        self.executor = owned_pool(
+            workers,
             initializer=_init_worker,
             initargs=(self.started,),
             max_tasks_per_child=1000,  # bounds memory growth from lxml/trafilatura
+            mp_context=mp,
         )
 
     def submit(

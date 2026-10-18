@@ -13,7 +13,6 @@ them running (Gate 1, G1.2: 72 h unattended).
 
 from __future__ import annotations
 
-import ctypes
 import logging
 import os
 import signal
@@ -27,6 +26,7 @@ from pathlib import Path
 from typing import IO
 
 from newsrag.config import Settings
+from newsrag.procutil import die_with_parent
 from newsrag.storage.fsio import ProcessLock, sweep_tmp
 
 log = logging.getLogger("newsrag.supervisor")
@@ -35,12 +35,11 @@ COMPONENTS = ("poller", "fetcher", "writer")
 STOP_TIMEOUT_S = 90.0
 CRASH_WINDOW_S = 600.0
 MAX_BACKOFF_S = 60.0
-_PR_SET_PDEATHSIG = 1
 
 
 def _die_with_parent() -> None:  # pragma: no cover - runs in the child before exec
-    libc = ctypes.CDLL("libc.so.6", use_errno=True)
-    libc.prctl(_PR_SET_PDEATHSIG, signal.SIGTERM)
+    # SIGTERM, not SIGKILL: an orphaned child should still drain and flush.
+    die_with_parent(signal.SIGTERM)
 
 
 @dataclass

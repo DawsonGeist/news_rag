@@ -2,6 +2,14 @@
 
 Newest first. Each entry records what was decided, why, and what would reopen it.
 
+## 2026-10-18: Found by the first full vetting run
+
+| Decision | Choice | Why | Revisit if |
+| --- | --- | --- | --- |
+| HTTP version | HTTP/1.1 only (was HTTP/2) | With one request per host there is nothing to multiplex. httpx's HTTP/2 stack raised `h2.exceptions.ProtocolError` (escaping httpx unwrapped) on about one publisher in five at 64-way concurrency. | — |
+| Unexpected network exceptions | Any exception from the HTTP stack becomes a `network:<Type>` result | One odd server must cost one URL, never a publisher or a batch | — |
+| Process pools | `procutil.owned_pool`: `spawn` workers with `PR_SET_PDEATHSIG(SIGKILL)` | Under Python 3.14's default `forkserver`, every SIGKILLed writer leaked its forkserver and workers (66 processes, about 9.5 GB, after the kill tests). The pipeline kill test now fails on any leaked process. | — |
+
 ## 2026-10-17: P1.5 vetter
 
 | Decision | Choice | Why | Revisit if |

@@ -135,10 +135,10 @@ def feeds_vet(
 ) -> None:
     """Vetter stages B and C: check feeds, sample articles, record verdicts (resumable)."""
     import asyncio
-    from concurrent.futures import ProcessPoolExecutor
 
     from newsrag.crawl.http import make_client
     from newsrag.feeds.vetter import Vetter, report_counts, select_feeds
+    from newsrag.procutil import owned_pool
     from newsrag.storage.state import connect, init_schema
 
     _setup_logging()
@@ -150,7 +150,7 @@ def feeds_vet(
     typer.echo(f"vetting {n} feeds from {len(by_source)} publishers")
 
     async def main() -> dict[str, int]:
-        with ProcessPoolExecutor(max_workers=settings.writer.extract_workers) as pool:
+        with owned_pool(settings.writer.extract_workers) as pool:
             async with make_client(settings) as client:
                 return await Vetter(settings, conn, client, pool).run(by_source)
 

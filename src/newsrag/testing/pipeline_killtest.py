@@ -10,11 +10,13 @@ cleanly and checks the invariants:
 - no duplicate ``(doc_id, revision)``, revisions contiguous
 - every discovered URL reached ``stored`` (all pages are healthy)
 - exactly the expected Documents exist, one revision each
-- ``tmp/`` is empty and no pipeline process is left running
+- ``tmp/`` is empty and no process the iteration started is left running, pool
+  workers of killed writers included
 """
 
 from __future__ import annotations
 
+import contextlib
 import os
 import random
 import signal
@@ -142,6 +144,24 @@ def _children(pid: int) -> list[int]:
     return out
 
 
+def _newsrag_processes() -> set[int]:
+    """Every live process of this user running newsrag code, pool workers included
+    (their command line names the multiprocessing entry point, so match broadly)."""
+    me = os.getpid()
+    out = set()
+    for cmdline in Path("/proc").glob("[0-9]*/cmdline"):
+        pid = int(cmdline.parent.name)
+        if pid == me:
+            continue
+        try:
+            args = cmdline.read_bytes().replace(b"\0", b" ")
+        except OSError:
+            continue
+        if (b"newsrag" in args or b"multiprocessing" in args) and _alive(pid):
+            out.add(pid)
+    return out
+
+
 def _alive(pid: int) -> bool:
     try:
         os.kill(pid, 0)
@@ -241,6 +261,7 @@ def run_iteration(root: Path, rng: random.Random, kills: int) -> tuple[int, list
     cfg.write_text(f'data_dir = "{data_dir}"\n{CONFIG}', encoding="utf-8")
     env = os.environ | {"NEWSRAG_CONFIG": str(cfg), "NEWSRAG_DATA_DIR": str(data_dir)}
     settings = load_settings(cfg)
+    before = _newsrag_processes()
     with _servers() as bases:
         conn = connect(settings.state_db)
         init_schema(conn)
@@ -287,6 +308,13 @@ def run_iteration(root: Path, rng: random.Random, kills: int) -> tuple[int, list
             time.sleep(0.5)
         problems = run.stop()
         problems += _check(settings, bases)
+        # Nothing the iteration started may outlive it: not a child, not a pool worker
+        # orphaned by a SIGKILLed writer (the forkserver leak this check was added for).
+        if leaked := _wait_dead(sorted(_newsrag_processes() - before), 10):
+            problems.append(f"leaked processes: {leaked}")
+            for p in leaked:
+                with contextlib.suppress(ProcessLookupError):
+                    os.kill(p, signal.SIGKILL)
         if problems:
             out = (data_dir / "run-all.out").read_text(errors="replace")[-2000:]
             problems.append(f"supervisor output tail: {out}")

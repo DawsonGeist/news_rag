@@ -117,9 +117,13 @@ def release_host(
 
 def make_client(settings: Settings) -> httpx.AsyncClient:
     """The one HTTP client configuration every request uses. Redirects are handled by
-    ``PoliteClient.get`` so robots.txt is checked on every hop."""
+    ``PoliteClient.get`` so robots.txt is checked on every hop.
+
+    HTTP/1.1 only: with one request per host there is nothing to multiplex, and the
+    full vetting run hit ``h2.exceptions.ProtocolError`` (escaping httpx unwrapped) on
+    about one publisher in five at high concurrency."""
     return httpx.AsyncClient(
-        http2=True,
+        http2=False,
         follow_redirects=False,
         timeout=httpx.Timeout(settings.fetch.request_timeout_s),
         headers={"User-Agent": settings.user_agent, "From": settings.contact_email},
@@ -162,6 +166,11 @@ class PoliteClient:
             except httpx.TimeoutException:
                 return GetResult("timeout", url, error="timeout")
             except httpx.TransportError as e:
+                return GetResult("network", url, error=f"network:{type(e).__name__}")
+            except Exception as e:
+                # Protocol stacks under httpx (h2, h11, ssl) sometimes raise their own
+                # types. One odd server must cost one URL, never a whole batch.
+                log.info("unexpected %s fetching %s: %s", type(e).__name__, url, e)
                 return GetResult("network", url, error=f"network:{type(e).__name__}")
             if isinstance(result, str):  # a redirect target
                 try:
@@ -249,7 +258,7 @@ class PoliteClient:
         robots_url = f"{parts.scheme}://{parts.netloc}/robots.txt"
         try:
             r = await self.client.get(robots_url, follow_redirects=True)
-        except httpx.HTTPError as e:
+        except Exception as e:  # see PoliteClient.get
             log.info("robots.txt unreachable for %s: %s %s", parts.netloc, type(e).__name__, e)
             return pol.ROBOTS_NETWORK_ERROR, None
         text = r.content[:ROBOTS_MAX_BYTES].decode("utf-8", errors="replace")

@@ -405,3 +405,27 @@ async def test_make_client_identifies_us(data_dir: Path) -> None:
         assert client.headers["user-agent"] == s.user_agent
         assert client.headers["from"] == s.contact_email
         assert client.follow_redirects is False  # redirects go through robots checks
+
+
+async def test_unexpected_protocol_errors_are_network_errors(
+    conn: sqlite3.Connection, data_dir: Path
+) -> None:
+    class ProtocolError(Exception):  # stands in for h2.exceptions.ProtocolError
+        pass
+
+    async def handler(req: httpx.Request) -> httpx.Response:
+        if req.url.path == "/robots.txt":
+            return httpx.Response(404)
+        raise ProtocolError("Invalid input ConnectionInputs.SEND_SETTINGS")
+
+    (uid,) = add_urls(conn, "https://e.com/a")
+    await process_one(settings_for(data_dir), conn, handler)
+    r = row(conn, uid)
+    assert (r["state"], r["last_error"]) == ("pending", "network:ProtocolError")
+
+    async def robots_breaks(req: httpx.Request) -> httpx.Response:
+        raise ProtocolError("stream reset")
+
+    (uid2,) = add_urls(conn, "https://f.com/a")
+    await process_one(settings_for(data_dir), conn, robots_breaks)
+    assert row(conn, uid2)["last_error"] == "robots_unavailable"

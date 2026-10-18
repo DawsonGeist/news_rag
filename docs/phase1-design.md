@@ -132,7 +132,7 @@ stored ──feed reports update──▶ pending (low priority re-fetch)
 
 ### 3. Article fetcher
 
-- **Concurrency:** asyncio with httpx (HTTP/2 enabled). At most `global_concurrency` (64) requests in flight and **one per host**. When a fetch ends, the host's `next_allowed_at` is set to now + `crawl_delay_s`: robots.txt `Crawl-delay` if present, else 5 s, capped at 60 s.
+- **Concurrency:** asyncio with httpx over HTTP/1.1 (HTTP/2 was dropped: nothing to multiplex at one request per host, and its stack was unreliable under load). At most `global_concurrency` (64) requests in flight and **one per host**. When a fetch ends, the host's `next_allowed_at` is set to now + `crawl_delay_s`: robots.txt `Crawl-delay` if present, else 5 s, capped at 60 s.
 - **Claiming work:** one transaction leases up to `claim_batch` (200) ready rows, **at most one per host**, from hosts whose `next_allowed_at` and `backoff_until` have passed. This stops one big publisher from starving the rest.
 - **Host reservation:** the claim also pushes the host's `next_allowed_at` past the longest possible fetch (2 × request timeout + 30 s). No other claim, in this process or another fetcher process, can pick that host until the fetch ends and sets the real next time. A crashed fetcher's reservation simply lapses. This needs no extra columns or locks.
 - **robots.txt:** parsed with protego against the product token `newsrag`, and cached in `hosts` for 24 h.
@@ -227,6 +227,7 @@ Synthetic fixtures (`tests/fixtures/synthetic/articles/`, with `expected.yaml`) 
   - there are no duplicate `(doc_id, revision)` pairs
   - every frontier URL eventually reaches `stored`, `skipped` or `failed`
   - no files are left in `tmp/`
+  - no process the iteration started is still running, including pool workers of killed writers
 
 ## Gate 1: exit criteria for Phase 1
 
