@@ -16,6 +16,7 @@ Times are UTC.
 | about 13:13 | **Power-pull test (G1.4):** the author pulled the power cord mid-run | Booted at 13:15:00. The service started by itself at 13:15:32 without a login. Writer recovery reclaimed 10 in-flight extractions. SQLite `quick_check` ok, `storage verify --deep` 0 problems, nothing lost or duplicated (110,588 stored before the cut, 111,079 after). No manual intervention. |
 | 13:15–13:45 | ProtonVPN (free tier) active after the reboot; crawler traffic went through it | Network errors 3.4% (the connection was unstable while the VPN was set up). The author turned the VPN off. 39 URLs that failed for good in this window were re-queued by hand; 38 failed again with 403 from the direct IP. **The 403s were not caused by the VPN:** they come from a few hosts that block regardless of IP (see below). |
 | from 13:39 | bhg.com, which served 51 pages overnight, started answering 403 | Likely rate-based bot protection reacting to the crawler on the home IP |
+| 13:58 | **Operator change:** contact address switched to `dawsonnewsrag@gmail.com`; graceful service restart | Planned config change, not a failure. The writer flushed before exit. |
 
 ## Hosts that block the crawler
 

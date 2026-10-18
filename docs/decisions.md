@@ -8,6 +8,7 @@ Newest first. Each entry records what was decided, why, and what would reopen it
 | --- | --- | --- | --- |
 | Process manager | A systemd user service (`deploy/install-service.sh`) running `newsrag run all`, with lingering enabled | Survives logout and closing the session. systemd restarts the supervisor; the supervisor restarts components. `KillMode=mixed` lets the supervisor stop children gracefully. | Moving to a system service or containers |
 | Gate 1 soak | Approved by the author: 72 h of continuous crawling of all accepted feeds | G1.2 and G1.3 need it | — |
+| Operator contact address | `From: dawsonnewsrag@gmail.com`, a dedicated mailbox. Supersedes the personal address in the P1.2 entries below. | Keeps the crawler contactable without putting the author's personal inbox in thousands of server logs | — |
 | Crawler network path | The author's direct connection, no VPN | Every request already identifies the operator (`From:` email, User-Agent), so a VPN adds no anonymity. (Correction: an early before/after comparison blamed the VPN for a 6× rise in 403s. That was confounded by host mix; the 403s come from a few hosts that block regardless of IP. The network errors in that window came from an unstable connection while the VPN was being set up.) | The home IP gets flagged by bot protection: move the crawler's egress to a dedicated VPS IP, not a VPN |
 
 ## 2026-10-18: P1.6 maintenance and reports

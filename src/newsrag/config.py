@@ -21,7 +21,7 @@ from pydantic import BaseModel, ConfigDict, Field, field_validator
 REPO_ROOT = Path(__file__).resolve().parents[2]
 DEFAULT_CONFIG_PATH = REPO_ROOT / "config" / "newsrag.toml"
 DEFAULT_DATA_DIR = Path("~/newsrag-data")
-CONTACT_EMAIL = "dawson.geist@gmail.com"
+CONTACT_EMAIL = "dawsonnewsrag@gmail.com"  # dedicated crawler mailbox, not personal
 # A bare product token: some WAFs (NPR's, for one) stall User-Agents that contain an
 # email or URL. The operator's contact goes in the From header instead (contact_email).
 USER_AGENT = "newsrag/0.1"
