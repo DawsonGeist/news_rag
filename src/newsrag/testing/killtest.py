@@ -29,6 +29,7 @@ from newsrag import ids
 from newsrag.contracts.v1 import ContentKind, DateSource, Document, Pipeline
 from newsrag.obs.events import worker_id
 from newsrag.storage.blobs import BlobStore, expire_blobs, sweep_blobs
+from newsrag.storage.compaction import compact
 from newsrag.storage.fsio import ProcessLock, TmpArea
 from newsrag.storage.recovery import reclaim_expired_leases, recover_writer, verify_storage
 from newsrag.storage.state import connect, init_schema, transaction
@@ -182,6 +183,8 @@ def run_worker(data_dir: Path) -> None:
                 )
                 items.append(ExtractedDoc(doc, c.url_id, c.ready_at, started, utcnow()))
             writer.commit(items)
+            # Compact after every commit, with a tiny target, so kills land mid-compaction.
+            compact(conn, data_dir, tmp, utcnow(), target_bytes=4096)
 
             if not rows and not claims:
                 left = conn.execute(

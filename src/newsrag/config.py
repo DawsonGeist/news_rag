@@ -70,6 +70,8 @@ class WriterSettings(_Section):
     extract_workers: int = Field(default_factory=_default_extract_workers)
     extract_timeout_s: float = 120.0  # a page taking longer hangs a worker; pool is rebuilt
     extract_max_attempts: int = 3  # for transient failures (timeouts, crashed workers)
+    compact_interval_s: float = 3600.0  # writer compacts hot parts at most this often
+    compact_target_mb: int = 128  # target size of monthly parts
 
 
 class VetSettings(_Section):

@@ -41,6 +41,7 @@ from newsrag.extract.extractor import ExtractContext, ExtractFailure, extract
 from newsrag.obs.events import worker_id
 from newsrag.procutil import owned_pool
 from newsrag.storage.blobs import BlobStore
+from newsrag.storage.compaction import compact
 from newsrag.storage.fsio import ProcessLock, TmpArea
 from newsrag.storage.recovery import recover_writer
 from newsrag.storage.state import transaction
@@ -159,6 +160,9 @@ class WriterLoop:
     ) -> None:
         self.s = settings
         self.job = job
+        self.tmp = tmp
+        # First compaction one interval after start: recovery has just run, no hurry.
+        self.last_compaction = time.monotonic()
         self.conn = conn
         self.worker = worker
         self.blobs = BlobStore(settings.data_dir, tmp)
@@ -409,10 +413,28 @@ class WriterLoop:
     def busy(self) -> bool:
         return bool(self.in_flight or self.waiting_suspects)
 
+    def maybe_compact(self) -> None:
+        """Compact when due and idle (nothing buffered or running), so it never delays
+        a flush. Compaction only rewrites committed parts."""
+        due = time.monotonic() - self.last_compaction >= self.s.writer.compact_interval_s
+        if not due or self.busy() or self.docs or self.failures:
+            return
+        report = compact(
+            self.conn,
+            self.s.data_dir,
+            self.tmp,
+            utcnow(),
+            self.s.writer.compact_target_mb * 1024 * 1024,
+        )
+        self.last_compaction = time.monotonic()
+        if report.inputs:
+            log.info("compaction: %s", report)
+
     def run(self, stop: threading.Event, idle_wait_s: float = 1.0) -> None:
         while not stop.is_set():
             claimed = self.step()
             if not claimed and not self.busy():
+                self.maybe_compact()
                 stop.wait(idle_wait_s)
         self.drain()
 

@@ -47,6 +47,11 @@ newsrag contracts export           # regenerate JSON Schemas after changing a mo
 newsrag feeds candidates           # regenerate feeds/candidates_us.yaml
 newsrag db init                    # create the crawl-state DB
 newsrag storage verify [--deep]    # check storage invariants
+newsrag storage reextract          # G1.6: re-extract blobs, compare content_hash
+newsrag storage compact            # merge small Parquet parts (writer does this itself)
+newsrag storage retention          # expire blobs, sweep orphans, prune poll log (daily job)
+newsrag report lag --since 24h     # G1.3 lag percentiles, queue depth
+newsrag report disk                # G1.7 sizes and 12-month forecast
 newsrag test kill                  # full-pipeline SIGKILL test (Gate 1, G1.4); --storage-only is faster
 newsrag run fetcher                # fetch pending frontier URLs until SIGTERM
 newsrag run writer                 # extract + store fetched pages until SIGTERM

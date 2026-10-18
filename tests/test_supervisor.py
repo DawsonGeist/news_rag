@@ -28,7 +28,7 @@ class _Fake(Supervisor):
 
 
 def test_restarts_crashed_child_and_stops_cleanly(tmp_path: Path) -> None:
-    sup = _Fake(Settings(data_dir=tmp_path / "data"), ("crasher", "sleeper"))
+    sup = _Fake(Settings(data_dir=tmp_path / "data"), ("crasher", "sleeper"), jobs=())
     t = threading.Thread(target=sup.run, kwargs={"poll_s": 0.05})
     t.start()
     try:
@@ -45,3 +45,21 @@ def test_restarts_crashed_child_and_stops_cleanly(tmp_path: Path) -> None:
     assert sup.children[1].proc is not None and sup.children[1].proc.returncode is not None
     assert sleeper_pid > 0
     assert (tmp_path / "data" / "logs" / "crasher.log").exists()
+
+
+def test_jobs_run_on_schedule(tmp_path: Path) -> None:
+    sup = Supervisor(
+        Settings(data_dir=tmp_path / "data"), (), jobs=(("help", ("--help",), 0.0, 3600.0),)
+    )
+    t = threading.Thread(target=sup.run, kwargs={"poll_s": 0.05})
+    t.start()
+    try:
+        deadline = time.monotonic() + 20
+        log = tmp_path / "data" / "logs" / "help.log"
+        while not (log.exists() and b"Usage" in log.read_bytes()) and time.monotonic() < deadline:
+            time.sleep(0.1)
+        assert b"Usage" in log.read_bytes()
+        assert len(sup.job_due) == 1  # scheduled once; next run an hour out
+    finally:
+        sup.stopping.set()
+        t.join(timeout=30)

@@ -61,6 +61,8 @@ default_interval_s = 2
 flush_rows = 8
 flush_seconds = 0.5
 extract_workers = 2
+compact_interval_s = 1.0
+compact_target_mb = 1
 """
 
 

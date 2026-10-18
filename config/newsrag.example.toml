@@ -34,6 +34,8 @@ flush_seconds = 60.0
 # extract_workers = 8        # default: min(8, CPU count - 4)
 extract_timeout_s = 120.0
 extract_max_attempts = 3
+compact_interval_s = 3600.0
+compact_target_mb = 128
 
 [vet]
 concurrency = 64

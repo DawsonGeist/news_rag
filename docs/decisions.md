@@ -2,6 +2,17 @@
 
 Newest first. Each entry records what was decided, why, and what would reopen it.
 
+## 2026-10-18: P1.6 maintenance and reports
+
+| Decision | Choice | Why | Revisit if |
+| --- | --- | --- | --- |
+| Compaction commit | All months in one transaction | A part spanning a month boundary feeds two months; committing them separately risks duplicate rows after a crash | Compaction runs get long enough to stall the writer |
+| Compaction trigger | In the writer, when idle and at most hourly | Never delays a flush; the writer already owns `tables/` | — |
+| Stage-event rollup | Deferred. Raw rows are kept. | Gate 1 needs only a 72 h window; about 6M rows a month is fine for SQLite | `stage_events` queries slow down |
+| Disk forecast | Last 7 days' rate. Blobs plateau at retention; text and state grow linearly. Marked rough under a day of data. | Simple and explainable. Fixed SQLite overhead dominates small samples. | Phase 2 adds vectors (must be added to the forecast) |
+| Re-extraction check | Compares only Documents with the current `extractor_version`; expired blobs counted, not compared | A new version is expected to differ | — |
+| Maintenance jobs | The supervisor runs one-shot jobs (retention daily, first after 10 min) | Same restart, logging and PDEATHSIG handling as components | — |
+
 ## 2026-10-18: Found by the first full vetting run
 
 | Decision | Choice | Why | Revisit if |

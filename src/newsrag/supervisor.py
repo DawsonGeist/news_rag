@@ -32,6 +32,8 @@ from newsrag.storage.fsio import ProcessLock, sweep_tmp
 log = logging.getLogger("newsrag.supervisor")
 
 COMPONENTS = ("poller", "fetcher", "writer")
+# One-shot jobs: (name, CLI args, first run after s, then every s).
+JOBS = (("retention", ("storage", "retention"), 600.0, 86400.0),)
 STOP_TIMEOUT_S = 90.0
 CRASH_WINDOW_S = 600.0
 MAX_BACKOFF_S = 60.0
@@ -57,11 +59,19 @@ class Child:
 
 
 class Supervisor:
-    def __init__(self, settings: Settings, components: tuple[str, ...] = COMPONENTS) -> None:
+    def __init__(
+        self,
+        settings: Settings,
+        components: tuple[str, ...] = COMPONENTS,
+        jobs: tuple[tuple[str, tuple[str, ...], float, float], ...] = JOBS,
+    ) -> None:
         self.s = settings
         self.logs = settings.data_dir / "logs"
         self.children = [Child(name) for name in components]
         self.stopping = threading.Event()
+        self.jobs = jobs
+        self.job_due: dict[str, float] = {}
+        self.job_procs: dict[str, subprocess.Popen[bytes]] = {}
 
     def _command(self, name: str) -> list[str]:
         return [sys.executable, "-m", "newsrag.cli", "run", name]
@@ -103,12 +113,48 @@ class Supervisor:
                 now = time.monotonic()
                 for child in self.children:
                     self._check(child, now)
+                self._run_jobs(now)
                 self.stopping.wait(poll_s)
             self._stop_all()
             # A child killed just before shutdown is never restarted to sweep its own.
             sweep_tmp(self.s.tmp_dir)
 
+    def _run_jobs(self, now: float) -> None:
+        """Start due one-shot jobs; log how finished ones ended. A job that is still
+        running when it is due again is not started twice."""
+        for name, args, first_s, every_s in self.jobs:
+            proc = self.job_procs.get(name)
+            if proc is not None:
+                if proc.poll() is None:
+                    continue
+                level = logging.INFO if proc.returncode == 0 else logging.ERROR
+                log.log(level, "job %s exited with %s", name, proc.returncode)
+                del self.job_procs[name]
+            due = self.job_due.setdefault(name, now + first_s)
+            if now < due:
+                continue
+            self.job_due[name] = now + every_s
+            log_file = (self.logs / f"{name}.log").open("ab")
+            self.job_procs[name] = subprocess.Popen(
+                [sys.executable, "-m", "newsrag.cli", *args],
+                stdout=log_file,
+                stderr=subprocess.STDOUT,
+                stdin=subprocess.DEVNULL,
+                preexec_fn=_die_with_parent,
+                env=os.environ | {"NEWSRAG_DATA_DIR": str(self.s.data_dir)},
+            )
+            log_file.close()
+            log.info("started job %s pid %d", name, self.job_procs[name].pid)
+
     def _stop_all(self) -> None:
+        for proc in self.job_procs.values():
+            if proc.poll() is None:
+                proc.send_signal(signal.SIGTERM)
+                try:
+                    proc.wait(timeout=STOP_TIMEOUT_S)
+                except subprocess.TimeoutExpired:
+                    proc.kill()
+                    proc.wait()
         running = [c for c in self.children if c.proc is not None]
         for c in running:
             assert c.proc is not None

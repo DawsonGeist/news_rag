@@ -195,10 +195,11 @@ Synthetic fixtures (`tests/fixtures/synthetic/articles/`, with `expected.yaml`) 
   - reset `extracting` rows whose lease expired back to `fetched`. Extraction is deterministic, so redoing it is safe.
 
   The blob orphan sweep is not part of startup. It walks millions of files, so it runs with the daily retention job.
-- **Compaction** (hourly; `newsrag run writer` does it between flushes):
-  1. Merge closed `hot/` parts into monthly parts of about 128 MB.
-  2. In one transaction, insert the new `table_files` row, mark the old rows `superseded`, and repoint `doc_revisions.file_id`.
+- **Compaction** (`storage.compaction`; the writer runs it when idle, at most every `compact_interval_s` (1 h); also `newsrag storage compact` while the writer is stopped):
+  1. Per month of `ingested_at`, merge the `hot/` parts plus any monthly part under half the target into `YYYY/MM/` parts of about `compact_target_mb` (128 MB). Rows are streamed one input part at a time, so memory stays bounded. A hot part spanning a month boundary feeds both months.
+  2. In **one** transaction for all months: install the new parts, insert their `table_files` rows, mark the inputs `superseded`, and repoint each `doc_revisions` row to the part that now holds it. Committing months separately could, after a crash, leave a boundary-spanning part's rows in two committed files.
   3. Delete the old files afterwards. If the process crashes before deleting them, startup cleanup removes them.
+  The storage kill test compacts after every commit, with a 4 KB target, so kills land mid-compaction.
 - **Raw retention** (daily):
   1. Select `blobs` where `state='present' AND expires_at < now` and mark them `expired` in a transaction.
   2. Unlink each file inside a write transaction that re-checks the row first, so a concurrent re-fetch that revived the blob wins.
@@ -209,9 +210,10 @@ Synthetic fixtures (`tests/fixtures/synthetic/articles/`, with `expected.yaml`) 
 ### 13. Observability (Phase 1 part)
 
 - Every stage writes `StageEvent`s through one helper, `obs.events.record(...)`.
-- `newsrag report lag [--since 24h] [--by source|stage]` prints discovery, ingest and end-to-end lag at p50, p95 and p99. It also prints the queue depth for each frontier state and the active, paused and rejected feed counts.
-- `newsrag report disk` prints blob, Parquet and SQLite sizes, plus a fill forecast for the data volume.
-- Raw stage events are kept 30 days, then rolled up into hourly percentiles per stage and source.
+- `newsrag report lag [--since 24h] [--by all|source]` prints discovery, ingest and end-to-end lag at p50, p95 and p99 (nearest rank). The lags are per URL: first `discover`, first `store` (`ok` or `skipped`), and the revision's `published_at`. It counts URLs stored inside the window and flags misdated pages (published after discovery). It also prints per-stage queue and work time, status counts, queue depth per frontier state, the oldest ready item's wait, and feed counts by status.
+- `newsrag report disk` prints blob, Parquet and SQLite sizes and a 12-month forecast (G1.7) from the last 7 days' rate. Raw blobs plateau at `raw_days` of intake; text and state grow linearly. Under a day of data the forecast is marked rough. Phase 2 vectors aren't included yet.
+- `newsrag storage reextract [--sample N]` (G1.6) re-runs the extractor over stored blobs for Documents with the current `extractor_version`, and fails on any `content_hash` mismatch. Expired blobs and other versions are counted, not compared.
+- Retention (`newsrag storage retention`, run daily by the supervisor as a one-shot job): expire raw blobs, sweep orphaned blob files, and prune `feed_polls` after `poll_log_days`. **Deferred:** rolling raw stage events into hourly percentiles after 30 days. Raw rows are kept for now (about 6M rows a month at full scale).
 
 ## Testing
 
@@ -256,7 +258,7 @@ Gates 2 and 3 are outlined here and get detailed in their own design docs:
 4. **P1.3** (done): extractor, the writer's extraction loop, synthetic fixtures, and the golden-fixture tooling. Verifying the golden cases is a human task, ongoing until Gate 1.
 5. **P1.4** (done): poller, supervisor (`run all`), feed import and status commands, and the full-pipeline kill test.
 6. **P1.5:** vetter stages B and C, reusing the fetcher and extractor (built; pilot done). Run it on all 9,069 text candidates.
-7. **P1.6:** lag and disk reports, compaction and retention jobs.
+7. **P1.6** (done): lag and disk reports, compaction, the retention job, and the re-extraction check (G1.6).
 8. **P1.7:** the 72 h soak, the power-pull test and the Gate 1 review.
 
 ## Risks

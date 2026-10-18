@@ -4,6 +4,7 @@ can run as a separate process (or on a separate machine) behind the contracts.""
 from __future__ import annotations
 
 import json
+from datetime import timedelta
 from pathlib import Path
 
 import typer
@@ -25,6 +26,8 @@ app.add_typer(storage_app, name="storage")
 app.add_typer(test_app, name="test")
 app.add_typer(run_app, name="run")
 app.add_typer(fixtures_app, name="fixtures")
+report_app = typer.Typer(no_args_is_help=True, help="Lag and disk reports.")
+app.add_typer(report_app, name="report")
 
 SCHEMAS_DIR = REPO_ROOT / "contracts" / "v1" / "schemas"
 FEEDS_DIR = REPO_ROOT / "feeds"
@@ -270,6 +273,108 @@ def storage_verify(
     typer.echo(f"{len(problems)} problems in {settings.data_dir}")
     if problems:
         raise typer.Exit(1)
+
+
+@storage_app.command("compact")
+def storage_compact() -> None:
+    """Merge small Parquet parts into monthly parts. Needs the writer lock, so it fails
+    while `run writer` is running (the writer compacts on its own)."""
+    from newsrag.storage.compaction import compact
+    from newsrag.storage.fsio import ProcessLock, TmpArea
+    from newsrag.storage.state import connect
+    from newsrag.storage.writer import WRITER_LOCK
+    from newsrag.timeutil import utcnow
+
+    settings = load_settings()
+    conn = connect(settings.state_db)
+    with ProcessLock(settings.locks_dir / WRITER_LOCK), TmpArea(settings.tmp_dir, "compact") as tmp:
+        report = compact(
+            conn, settings.data_dir, tmp, utcnow(), settings.writer.compact_target_mb * 1024 * 1024
+        )
+    conn.close()
+    typer.echo(f"compaction: {report}")
+
+
+@storage_app.command("reextract")
+def storage_reextract(
+    verify: bool = typer.Option(True, help="Compare content_hash (the only mode for now)."),
+    sample: int | None = typer.Option(None, help="Check at most this many Documents."),
+) -> None:
+    """G1.6: re-extract stored blobs and confirm identical content_hash values."""
+    from newsrag.procutil import owned_pool
+    from newsrag.storage.blobs import BlobStore
+    from newsrag.storage.fsio import TmpArea
+    from newsrag.storage.reextract import reextract
+    from newsrag.storage.state import connect
+
+    settings = load_settings()
+    conn = connect(settings.state_db)
+    with (
+        TmpArea(settings.tmp_dir, "reextract") as tmp,
+        owned_pool(settings.writer.extract_workers) as pool,
+    ):
+        report = reextract(conn, BlobStore(settings.data_dir, tmp), pool, sample)
+    conn.close()
+    typer.echo(
+        f"compared {report.compared}, matched {report.matched}, "
+        f"mismatched {len(report.mismatches)}; skipped: other extractor version "
+        f"{report.other_version}, blob expired {report.blob_missing}"
+    )
+    for m in report.mismatches[:20]:
+        typer.echo(f"  mismatch {m}")
+    if not report.passes:
+        raise typer.Exit(1)
+
+
+@storage_app.command("retention")
+def storage_retention() -> None:
+    """Expire raw blobs past retention, sweep orphaned blob files, prune the poll log."""
+    from newsrag.storage.retention import run_retention
+    from newsrag.storage.state import connect
+    from newsrag.timeutil import utcnow
+
+    _setup_logging()
+    settings = load_settings()
+    conn = connect(settings.state_db)
+    report = run_retention(conn, settings, utcnow())
+    conn.close()
+    typer.echo(f"retention: {report}")
+
+
+def _parse_since(value: str) -> timedelta:
+    units = {"m": 60, "h": 3600, "d": 86400}
+    if not value or value[-1] not in units or not value[:-1].isdigit():
+        raise typer.BadParameter("use e.g. 30m, 24h or 7d")
+    return timedelta(seconds=int(value[:-1]) * units[value[-1]])
+
+
+@report_app.command("lag")
+def report_lag(
+    since: str = typer.Option("24h", help="Window, e.g. 30m, 24h, 3d."),
+    by: str = typer.Option("all", help="all | source"),
+) -> None:
+    """Discovery, ingest and end-to-end lag p50/p95/p99, stage timings, queue depth (G1.3)."""
+    from newsrag.obs.reports import format_lag, lag_report
+    from newsrag.storage.state import connect
+    from newsrag.timeutil import utcnow
+
+    settings = load_settings()
+    conn = connect(settings.state_db)
+    typer.echo(format_lag(lag_report(conn, utcnow(), _parse_since(since), by == "source")))
+    conn.close()
+
+
+@report_app.command("disk")
+def report_disk() -> None:
+    """Blob, Parquet and SQLite sizes and a 12-month fill forecast (G1.7)."""
+    from newsrag.obs.reports import disk_report, format_disk
+    from newsrag.storage.state import connect
+    from newsrag.timeutil import utcnow
+
+    settings = load_settings()
+    conn = connect(settings.state_db)
+    typer.echo(format_disk(disk_report(conn, settings, utcnow())))
+    conn.close()
 
 
 @test_app.command("kill")

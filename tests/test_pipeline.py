@@ -5,7 +5,7 @@ import asyncio
 import random
 import sqlite3
 from collections.abc import Iterator
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Any
 
@@ -266,3 +266,42 @@ def test_crash_is_quarantined_and_charged_alone(conn: sqlite3.Connection, data_d
         "SELECT status, count(*) FROM stage_events WHERE stage = 'extract' GROUP BY 1"
     )
     assert dict(events.fetchall()) == {"ok": 5, "retry": 1}
+
+
+def test_reports_and_reextract_after_a_run(conn: sqlite3.Connection, data_dir: Path) -> None:
+    from newsrag.obs.reports import disk_report, lag_report
+    from newsrag.storage.reextract import reextract
+
+    s = settings_for(data_dir)
+    pages = {f"/{p.stem}": p.read_bytes() for p in FIXTURES.glob("*.html")}
+    for path in pages:
+        discover(conn, f"https://{HOST}{path}")
+    # Stand-in for the poller's discover events, which the lag report needs.
+    with transaction(conn):
+        for (uid,) in conn.execute("SELECT url_id FROM frontier").fetchall():
+            now = to_db(utcnow())
+            conn.execute(
+                "INSERT INTO stage_events (event_id, stage, status, url_id, worker_id, attempt, "
+                "started_at, finished_at, pipeline_version) "
+                "VALUES (?, 'discover', 'ok', ?, 't', 1, ?, ?, 't')",
+                (f"E{uid[:25]}", uid, now, now),
+            )
+    fetch_all(s, conn, pages)
+    store_all(s, conn)
+
+    lag = lag_report(conn, utcnow(), timedelta(hours=1))
+    group = lag.groups["all"]
+    assert group.ingest.n == len(pages)
+    assert group.ingest.p99 is not None and group.ingest.p99 < 120
+    assert group.end_to_end.n == group.discovery.n > 0  # pages with a publication date
+    assert lag.stage_status["store"] == {"ok": len(pages)}
+    assert lag.queue == {"stored": len(pages)}
+
+    disk = disk_report(conn, s, utcnow())
+    assert disk.blob_count == len(pages) and disk.parquet_rows == len(pages)
+    assert disk.docs_per_day > 0 and disk.forecast_12mo > disk.parquet_bytes
+    assert disk.rough  # under a day of data: the forecast is flagged, not trusted
+
+    with TmpArea(s.tmp_dir, "re") as tmp:
+        report = reextract(conn, BlobStore(s.data_dir, tmp))
+    assert report.passes and report.compared == len(pages) == report.matched
