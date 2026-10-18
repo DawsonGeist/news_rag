@@ -66,6 +66,8 @@ class WriterSettings(_Section):
     flush_rows: int = 500
     flush_seconds: float = 60.0
     extract_workers: int = Field(default_factory=_default_extract_workers)
+    extract_timeout_s: float = 120.0  # a page taking longer hangs a worker; pool is rebuilt
+    extract_max_attempts: int = 3  # for transient failures (timeouts, crashed workers)
 
 
 class RetentionSettings(_Section):

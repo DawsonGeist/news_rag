@@ -138,23 +138,35 @@ stored ──feed reports update──▶ pending (low priority re-fetch)
 
 The extractor takes the decompressed blob, the final URL and the frontier hints, and returns a Document or an error code.
 
-1. **Parse:** run lxml once, then pull the `rel=canonical` link, the JSON-LD blocks (`NewsArticle` and similar) and the meta tags.
-2. **Canonical URL:** `ids.choose_canonical`, then `doc_id`.
-3. **Body:** trafilatura `bare_extraction` with precision favoured and comments excluded. The text is normalized to the contract: NFC, each paragraph stripped, paragraphs joined with `\n\n`, and the zero-width characters and NBSPs that some sites inject removed or replaced.
-4. **`published_at`:** the first available of JSON-LD `datePublished`, then `article:published_time`, the feed item date, a URL path date (`/2026/10/17/`), and finally trafilatura's date guess (source `page_text`). Dates without a timezone are treated as UTC only when they come from the feed, and otherwise discarded rather than guessed. `modified_at` comes from JSON-LD `dateModified` or `article:modified_time`.
-5. **Language:** py3langid on the first 2,000 characters. Non-English documents are still stored, because downstream filters on `language='en'`.
-6. **Content kind:**
-   - `suspected_paywall` if JSON-LD `isAccessibleForFree` is false, or known paywall markers appear together with short text
-   - `non_article` if there are fewer than 80 words and no article JSON-LD
-   - `summary_only` if the extracted text is no longer than the feed summary
+1. **Decode:** the HTTP charset if it decodes cleanly, then the page's `<meta charset>`, then strict UTF-8, and statistical detection only as a last resort (it guesses badly on short pages).
+2. **Parse:** run lxml once, then pull the `rel=canonical` link, the JSON-LD blocks (`NewsArticle` and similar, including `@graph`), the meta tags, and every `class`/`id` value.
+3. **Canonical URL:** `ids.choose_canonical`, then `doc_id`.
+4. **Body:** trafilatura `bare_extraction` in its default (balanced) mode with comments excluded. Precision mode was rejected because it drops the text of inline links and leaves broken sentences. The headline is removed from the first line when trafilatura repeats it, either alone or fused to the next block. The text is normalized to the contract: NFC, each paragraph stripped, paragraphs joined with `\n\n`, and the zero-width characters and NBSPs that some sites inject removed or replaced.
+5. **Title:** JSON-LD `headline`, then `og:title`, then trafilatura's title, then `<title>`.
+6. **`published_at`:** the first plausible value of JSON-LD `datePublished`, then the publication meta tags (`article:published_time` and similar), the feed item date, a URL path date (`/2026/10/17/`), and finally trafilatura's date guess (source `page_text`).
+   - A timestamp without an offset is discarded rather than guessed. Feed dates are already UTC.
+   - A date-only value is pinned to 12:00 UTC, which keeps every US publication time on that date within ±12 h.
+   - Plausible means between 1995 and one day after the fetch.
+   - `modified_at` comes from JSON-LD `dateModified` or the modified-time meta tags.
+7. **Language:** py3langid on the title plus the first 2,000 characters. Below 50% confidence the language is left unknown, because a bare headline can come out as Dutch. Non-English documents are still stored, because downstream filters on `language='en'`.
+8. **Content kind:**
+   - `suspected_paywall` if JSON-LD `isAccessibleForFree` is false (on the article or one of its parts), or paywall markers appear in `class`/`id` attributes together with fewer than 250 words. Markers are never matched in scripts, and vendor names such as Piano are not markers, because NPR uses Piano for donation prompts.
+   - `non_article` if there are fewer than 80 words and no article JSON-LD, or the page has no article JSON-LD and is the site root or declares an `og:type` other than `article` (homepages and section pages).
+   - `summary_only` if the extracted text is no longer than the feed summary. `extracted_text` is then the summary.
+   - `suspected_paywall` if an article page yields no text at all.
    - otherwise `full_text`
-7. **Assemble:** `content_hash` and `word_count` are computed, and `extractor_version` is a hand-bumped string plus the trafilatura version.
+9. **Assemble:** `content_hash` and `word_count` are computed, and `extractor_version` is a hand-bumped string plus the trafilatura version.
 
-Golden tests cover each heuristic.
+Synthetic fixtures (`tests/fixtures/synthetic/articles/`, with `expected.yaml`) cover each heuristic. The extractor is deterministic, so G1.6 re-extraction reproduces `content_hash`. `ingested_at` is provisionally `fetched_at` until the writer sets it.
 
 ### 8. Storage writer
 
-- **Extraction loop:** lease `fetched` rows (setting them to `extracting`), submit them to the pool and buffer the resulting Documents.
+- **Extraction loop** (`newsrag run writer`): lease `fetched` rows (setting them to `extracting`), submit them to the pool of `extract_workers` processes, and buffer the resulting Documents.
+- **Charging failures to the right page.** Extraction runs untrusted pages through C extensions, so a worker can hang or die.
+  - Deterministic failures (`unparseable`, `blob_missing`) set the row to `failed`.
+  - **Hangs:** each worker reports when it actually starts a job, because the executor queues calls ahead of its workers. A job running longer than `extract_timeout_s` (120 s) is charged a transient attempt. The pool is killed and its other jobs are handed back uncharged.
+  - **Crashes:** a dead worker breaks the whole pool, and the culprit is unknown. Every job it held is handed back uncharged as a *suspect*, and suspects run one at a time in a single-worker quarantine pool, where a crash can only be the suspect's own. CPython 3.14 often misses a dead worker while another is busy; the hang rule then catches that job, still charged to the right page.
+  - Transient failures go back to `fetched` with backoff, up to `extract_max_attempts` (3), then `failed`. Every failure writes an `extract` stage event.
 - **Flush** when `flush_rows` (500) or `flush_seconds` (60) is reached. The 60 s flush bounds the writer's share of ingest lag.
   1. **Resolve revisions** for each Document against `doc_revisions` and the other Documents in the same batch:
      - known `content_hash` for that `doc_id`: no row is written, and the frontier row is set to stored with the existing revision
@@ -191,7 +203,7 @@ Golden tests cover each heuristic.
 - **Synthetic fixtures** (committed, `tests/fixtures/synthetic/`):
   - hand-written feed XML: RSS 2.0, Atom, a missing-dates case and an audio-enclosures case
   - article HTML: a full article, a paywall, a non-article page, a JSON-LD date, a meta-only date and a cross-site canonical
-- **Golden fixtures** (local only, `tests/fixtures/golden/`, gitignored for copyright): about 40 real pages across 20 publishers, each with a hand-checked expected title, date, content kind and first and last paragraph. `newsrag fixtures capture <url>` saves new ones.
+- **Golden fixtures** (local only, `tests/fixtures/golden/`, gitignored for copyright): about 40 real pages across 20 publishers, each with a hand-checked expected title, date, content kind and first and last paragraph. `newsrag fixtures capture <url>` politely fetches a page and pre-fills `case.yaml` from the extractor, marked `verified: false`. A human corrects it and sets `verified: true`. `newsrag fixtures refill` re-fills unverified cases after an extractor fix, and `newsrag fixtures report` prints the G1.5 metrics over verified cases only.
 - **Integration tests:** the full poll → fetch → extract → store path against a local HTTP server (`respx` or a `pytest` fixture server) serving the synthetic fixtures.
 - **Kill test** (`newsrag test kill`): 20 iterations. Each starts the pipeline against the local fixture server and `SIGKILL`s a random process at a random moment. It then restarts and checks the invariants:
   - every `committed` file exists and matches its sha256
@@ -224,7 +236,7 @@ Gates 2 and 3 are outlined here and get detailed in their own design docs:
 1. **P1.0** (done): skeleton, contracts, state DDL, candidate extraction.
 2. **P1.1** (done): blob store, table-file writer, recovery, plus their unit tests and kill-test harness. Everything else commits through this, so it comes first.
 3. **P1.2** (done): fetcher with robots.txt and politeness, tested against mock transports and a local HTTP server.
-4. **P1.3:** extractor, plus synthetic and golden fixtures.
+4. **P1.3** (done): extractor, the writer's extraction loop, synthetic fixtures, and the golden-fixture tooling. Verifying the golden cases is a human task, ongoing until Gate 1.
 5. **P1.4:** poller and the supervisor (`run all`).
 6. **P1.5:** vetter stages B and C, reusing the fetcher and extractor. Run it on all 9,069 text candidates.
 7. **P1.6:** lag and disk reports, compaction and retention jobs.

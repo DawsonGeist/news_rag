@@ -2,6 +2,19 @@
 
 Newest first. Each entry records what was decided, why, and what would reopen it.
 
+## 2026-10-17: P1.3 extractor and writer loop
+
+| Decision | Choice | Why | Revisit if |
+| --- | --- | --- | --- |
+| trafilatura mode | Default (balanced), not `favor_precision` | On a live CBS page, precision mode dropped the text of inline links ("During a , a man…"). Broken sentences hurt stance search more than a little boilerplate. | Golden set shows boilerplate hurting G1.5 |
+| Paywall markers | Matched only in `class`/`id` attributes; no vendor names | NPR (free) was flagged because its Piano donation scripts matched `piano-` | Golden set shows missed paywalls |
+| Index pages | `non_article` when there's no article JSON-LD and either the site root or a non-article `og:type` | The CBS homepage passed the 80-word test on headline text alone | — |
+| Date-only values | Pinned to 12:00 UTC | Keeps every US publication time on that date within ±12 h. Naive timestamps are still discarded. | — |
+| Language confidence | Language left unknown below 0.5 | py3langid labelled an English headline as `nl` at 0.04 | — |
+| Charset order | HTTP header, then `<meta>`, then strict UTF-8, then detection | Detection garbles short pages | — |
+| Extraction failures | Charged only to the page that caused them: start-reported timeouts, plus a single-worker quarantine pool for crash suspects | A crash fails every job in the pool. Charging all of them would eventually mark healthy pages `failed`. CPython 3.14 also often misses a dead worker while another is busy. | — |
+| Golden expectations | Pre-filled by the extractor but `verified: false`. Only verified cases count toward G1.5, and an empty set fails. | A machine guess must never become ground truth | — |
+
 ## 2026-10-17: P1.2 fetcher
 
 | Decision | Choice | Why | Revisit if |

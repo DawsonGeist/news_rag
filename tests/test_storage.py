@@ -245,7 +245,7 @@ def test_claim_commit_updates_frontier(
     conn: sqlite3.Connection, data_dir: Path, tmp: TmpArea
 ) -> None:
     url = "https://example.com/news/story-1"
-    uid = _insert_frontier(conn, url, "fetched", raw_blob_hash="0" * 64)
+    uid = _insert_frontier(conn, url, "fetched", raw_blob_hash="0" * 64, fetched_at=to_db(T0))
     claims = claim_for_extraction(conn, "w", 10, 300, now=T0)
     assert [c.url_id for c in claims] == [uid]
     assert conn.execute("SELECT state FROM frontier").fetchone()[0] == "extracting"

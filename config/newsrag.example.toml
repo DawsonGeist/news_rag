@@ -30,6 +30,8 @@ pause_after_failures = 10
 flush_rows = 500
 flush_seconds = 60.0
 # extract_workers = 8        # default: min(8, CPU count - 4)
+extract_timeout_s = 120.0
+extract_max_attempts = 3
 
 [retention]
 raw_days = 60

@@ -1,0 +1,96 @@
+# Expected extractor output for each synthetic page (all content is fictional).
+# context: frontier hints passed to the extractor. expect: fields checked by
+# tests/test_extractor.py. first/last are prefixes/suffixes of the first and last
+# paragraph. Times are UTC.
+defaults:
+  fetched_at: "2026-10-17T14:00:00Z"
+
+cases:
+  full_jsonld:
+    context:
+      final_url: https://millbrookledger.example/news/solar-farm-approved?fbclid=x
+    expect:
+      content_kind: full_text
+      title: Millbrook council approves solar farm
+      canonical_url: https://millbrookledger.example/news/solar-farm-approved
+      authors: [Rosa Delgado, Tom Okafor]
+      published_at: "2026-10-16T22:30:00Z"
+      published_at_source: json_ld
+      modified_at: "2026-10-17T00:05:00Z"
+      language: en
+      paragraphs: 7
+      first: The Millbrook town council voted five to two
+      last: '"Every year we delay, our residents pay more," she said after the vote.'
+      contains: [roughly 30 construction jobs, the riverwalk, Construction is expected to begin in the spring.]
+
+  meta_date:
+    expect:
+      content_kind: full_text
+      title: River cleanup draws hundreds
+      published_at: "2026-10-16T08:30:00Z"
+      published_at_source: meta_tag
+      modified_at: "2026-10-16T09:00:00Z"
+      first: More than three hundred volunteers
+      last: can sign up at the library.
+
+  paywall_jsonld:
+    expect:
+      content_kind: suspected_paywall
+      published_at_source: json_ld
+
+  paywall_markers:
+    expect:
+      content_kind: suspected_paywall
+
+  non_article:
+    expect:
+      content_kind: non_article
+      title: Latest videos  # the page's own <h1> beats the <title> tag
+      published_at_source: none
+
+  cross_site_canonical:
+    context:
+      final_url: https://localpaper.example/2026/storm
+    expect:
+      content_kind: full_text
+      # A cross-site canonical is ignored: who published it is part of the data.
+      canonical_url: https://localpaper.example/2026/storm
+
+  summary_only:
+    context:
+      feed_summary: >-
+        <p>A new bakery opened on Main Street this week, offering sourdough, rye and fresh
+        pastries every morning. Owner Dana Wells said she spent ten years saving for the shop
+        and plans to hire four people before the holidays.</p>
+    expect:
+      content_kind: summary_only
+      first: A new bakery opened on Main Street this week, offering sourdough
+      last: before the holidays.
+
+  url_date_only:
+    context:
+      final_url: https://millbrookledger.example/2026/10/15/library-hours
+    expect:
+      published_at: "2026-10-15T12:00:00Z"
+      published_at_source: url_path
+
+  naive_date:
+    context:
+      feed_published_at: "2026-10-17T13:05:00Z"
+    expect:
+      # The JSON-LD date has no offset, so it is discarded rather than guessed.
+      published_at: "2026-10-17T13:05:00Z"
+      published_at_source: feed
+
+  spanish:
+    expect:
+      content_kind: full_text
+      language: es
+
+  cp1252:
+    context:
+      content_type: text/html
+    expect:
+      title: Café owner honored by chamber
+      first: The owner of the Corner Café, José Alvarez, received the chamber of commerce’s
+      language: en

@@ -17,12 +17,14 @@ db_app = typer.Typer(no_args_is_help=True, help="Crawl-state database.")
 storage_app = typer.Typer(no_args_is_help=True, help="Archive storage.")
 test_app = typer.Typer(no_args_is_help=True, help="Durability tests.")
 run_app = typer.Typer(no_args_is_help=True, help="Long-running pipeline processes.")
+fixtures_app = typer.Typer(no_args_is_help=True, help="Golden fixtures (local only).")
 app.add_typer(contracts_app, name="contracts")
 app.add_typer(feeds_app, name="feeds")
 app.add_typer(db_app, name="db")
 app.add_typer(storage_app, name="storage")
 app.add_typer(test_app, name="test")
 app.add_typer(run_app, name="run")
+app.add_typer(fixtures_app, name="fixtures")
 
 SCHEMAS_DIR = REPO_ROOT / "contracts" / "v1" / "schemas"
 FEEDS_DIR = REPO_ROOT / "feeds"
@@ -173,6 +175,79 @@ def run_fetcher_cmd() -> None:
 
     asyncio.run(main())
     conn.close()
+
+
+@run_app.command("writer")
+def run_writer_cmd() -> None:
+    """Extract and store fetched pages until SIGTERM/SIGINT, then drain and flush."""
+    import signal
+    import threading
+
+    from newsrag.storage.state import connect, init_schema
+    from newsrag.storage.writer_loop import run_writer
+
+    _setup_logging()
+    settings = load_settings()
+    conn = connect(settings.state_db)
+    init_schema(conn)
+    stop = threading.Event()
+    for sig in (signal.SIGTERM, signal.SIGINT):
+        signal.signal(sig, lambda *_: stop.set())
+    run_writer(settings, conn, stop)
+    conn.close()
+
+
+@fixtures_app.command("capture")
+def fixtures_capture(urls: list[str]) -> None:
+    """Fetch pages politely and save them as unverified golden cases to check by hand."""
+    from newsrag.testing.golden import capture
+
+    settings = load_settings()
+    for url in urls:
+        try:
+            typer.echo(f"saved {capture(settings, url)}")
+        except Exception as e:
+            typer.echo(f"{url}: {e}", err=True)
+
+
+@fixtures_app.command("refill")
+def fixtures_refill() -> None:
+    """Re-fill unverified golden cases from the current extractor (no network)."""
+    from newsrag.testing.golden import refill_unverified
+
+    typer.echo(f"refilled {refill_unverified()} unverified cases")
+
+
+@fixtures_app.command("report")
+def fixtures_report() -> None:
+    """Gate 1 G1.5 metrics over the verified golden cases."""
+    from newsrag.testing.golden import (
+        MIN_DATE_OK,
+        MIN_KIND_OK,
+        MIN_PARAGRAPHS_OK,
+        TARGET_CASES,
+        TARGET_PUBLISHERS,
+        evaluate,
+    )
+
+    report = evaluate()
+    for c in report.cases:
+        if c.notes:
+            typer.echo(f"{c.name}: {'; '.join(c.notes)}")
+    typer.echo(
+        f"{len(report.cases)}/{TARGET_CASES} verified cases from "
+        f"{report.publishers}/{TARGET_PUBLISHERS} publishers ({report.unverified} unverified)"
+    )
+    if not report.cases:
+        typer.echo("no verified cases: check case.yaml files and set verified: true")
+        raise typer.Exit(1)
+    typer.echo(
+        f"  date within 24 h   {report.date_ok:6.1%}  (need {MIN_DATE_OK:.0%})\n"
+        f"  content kind       {report.kind_ok:6.1%}  (need {MIN_KIND_OK:.0%})\n"
+        f"  first+last para    {report.paragraphs_ok:6.1%}  (need {MIN_PARAGRAPHS_OK:.0%})"
+    )
+    if not report.passes:
+        raise typer.Exit(1)
 
 
 if __name__ == "__main__":

@@ -11,7 +11,7 @@ A local-first search engine over news and long-form content. It finds articles b
 
 ## Status
 
-Phase 1 (vet, poll, fetch, extract, store). P1.0 (skeleton, contracts, state DDL, feed candidates) P1.1 (blob store, table-file writer, recovery, kill test) and P1.2 (fetcher) are done. Next is P1.3: the extractor.
+Phase 1 (vet, poll, fetch, extract, store). P1.0 (skeleton, contracts, state DDL, feed candidates) P1.1 (blob store, table-file writer, recovery, kill test), P1.2 (fetcher) and P1.3 (extractor, writer loop, fixture tooling) are done. Next is P1.4: the poller and the `run all` supervisor.
 
 ## Layout
 
@@ -49,6 +49,9 @@ newsrag db init                    # create the crawl-state DB
 newsrag storage verify [--deep]    # check storage invariants
 newsrag test kill                  # SIGKILL kill test (Gate 1, G1.4)
 newsrag run fetcher                # fetch pending frontier URLs until SIGTERM
+newsrag run writer                 # extract + store fetched pages until SIGTERM
+newsrag fixtures capture <url>...  # save real pages as unverified golden cases (local only)
+newsrag fixtures report            # G1.5 metrics over verified golden cases
 ```
 
 Everything runs on one native Ubuntu desktop (see [docs/setup-linux.md](docs/setup-linux.md)). The code is POSIX-only (`fcntl`, directory fsync).

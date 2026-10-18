@@ -65,7 +65,7 @@ strict = true
 plugins = ["pydantic.mypy"]
 mypy_path = "src"
 
-# pyarrow ships no type information; its values are typed Any at our boundary.
+# These ship no usable type information; their values are typed Any at our boundary.
 [[tool.mypy.overrides]]
-module = ["pyarrow", "pyarrow.*"]
+module = ["pyarrow", "pyarrow.*", "lxml", "lxml.*", "py3langid", "py3langid.*"]
 ignore_missing_imports = true

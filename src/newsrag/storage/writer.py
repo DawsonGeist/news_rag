@@ -4,8 +4,7 @@ Only one writer process may run (``WRITER_LOCK``). Revision numbers are resolved
 outside the write transaction, which is safe only because nobody else inserts
 into ``doc_revisions``.
 
-The extraction loop (lease ``fetched`` rows, run the extractor pool, buffer, flush)
-is built on top of ``claim_for_extraction`` and ``StorageWriter.commit`` in P1.3.
+The extraction loop that feeds it lives in ``storage.writer_loop``.
 """
 
 from __future__ import annotations
@@ -77,6 +76,21 @@ def resolve_revisions(conn: sqlite3.Connection, items: Sequence[ExtractedDoc]) -
     return out
 
 
+@dataclass(frozen=True)
+class ExtractionFailed:
+    """An extraction that produced no Document. ``retry_at`` set: back to ``fetched``
+    then (transient: timeout, crashed worker); None: ``failed`` for good."""
+
+    url_id: str
+    error_code: str
+    detail: str
+    extract_enqueued_at: datetime | None
+    extract_started_at: datetime
+    extract_finished_at: datetime
+    attempt: int = 1
+    retry_at: datetime | None = None
+
+
 @dataclass
 class CommitResult:
     file_id: str | None = None
@@ -99,11 +113,13 @@ class StorageWriter:
         self.worker = worker
         self.pipeline_version = pipeline_version
 
-    def commit(self, items: Sequence[ExtractedDoc]) -> CommitResult:
+    def commit(
+        self, items: Sequence[ExtractedDoc], failures: Sequence[ExtractionFailed] = ()
+    ) -> CommitResult:
         """Durably store a batch: write the part, then one transaction for the manifest,
         the revision ledger, the frontier rows and the extract/store stage events."""
         result = CommitResult()
-        if not items:
+        if not items and not failures:
             return result
         flush_started = utcnow()
         # ingested_at is the flush time, so it is >= fetched_at and measures the writer's
@@ -117,6 +133,7 @@ class StorageWriter:
 
         with transaction(self.conn):
             now = utcnow()
+            self._record_failures(failures, now)
             if part is not None:
                 install_part(self.conn, self.data_dir, part, now)
                 result.file_id = part.file_id
@@ -183,6 +200,39 @@ class StorageWriter:
             record(self.conn, events)
         return result
 
+    def _record_failures(self, failures: Sequence[ExtractionFailed], now: datetime) -> None:
+        events = []
+        for f in failures:
+            if f.retry_at is None:
+                self.conn.execute(
+                    "UPDATE frontier SET state = 'failed', lease_owner = NULL, "
+                    "lease_expires_at = NULL, last_error = ?, updated_at = ? WHERE url_id = ?",
+                    (f.error_code, to_db(now), f.url_id),
+                )
+            else:
+                self.conn.execute(
+                    "UPDATE frontier SET state = 'fetched', lease_owner = NULL, "
+                    "lease_expires_at = NULL, last_error = ?, next_attempt_at = ?, "
+                    "updated_at = ? WHERE url_id = ?",
+                    (f.error_code, to_db(f.retry_at), to_db(now), f.url_id),
+                )
+            events.append(
+                new_event(
+                    Stage.EXTRACT,
+                    StageStatus.ERROR if f.retry_at is None else StageStatus.RETRY,
+                    worker=self.worker,
+                    started_at=f.extract_started_at,
+                    finished_at=f.extract_finished_at,
+                    enqueued_at=f.extract_enqueued_at,
+                    url_id=f.url_id,
+                    attempt=f.attempt,
+                    error_code=f.error_code,
+                    detail=f.detail[:500] or None,
+                    pipeline_version=self.pipeline_version,
+                )
+            )
+        record(self.conn, events)
+
 
 @dataclass(frozen=True)
 class ExtractionClaim:
@@ -192,6 +242,14 @@ class ExtractionClaim:
     raw_blob_hash: str
     attempts: int
     ready_at: datetime
+    source_id: str
+    discovered_at: datetime
+    fetched_at: datetime
+    content_type: str | None = None
+    feed_id: str | None = None
+    feed_title: str | None = None
+    feed_summary: str | None = None
+    feed_published_at: datetime | None = None
 
 
 def claim_for_extraction(
@@ -202,7 +260,9 @@ def claim_for_extraction(
     expires = to_db(now + timedelta(seconds=lease_s))
     with transaction(conn):
         rows = conn.execute(
-            "SELECT url_id, url, final_url, raw_blob_hash, attempts, ready_at FROM frontier "
+            "SELECT url_id, url, final_url, raw_blob_hash, attempts, ready_at, source_id, "
+            "discovered_at, fetched_at, content_type, feed_id, feed_title, feed_summary, "
+            "feed_published_at FROM frontier "
             "WHERE state = 'fetched' AND next_attempt_at <= ? "
             "ORDER BY priority DESC, next_attempt_at LIMIT ?",
             (to_db(now), limit),
@@ -214,12 +274,20 @@ def claim_for_extraction(
         )
     return [
         ExtractionClaim(
-            r["url_id"],
-            r["url"],
-            r["final_url"],
-            r["raw_blob_hash"],
-            r["attempts"],
-            from_db(r["ready_at"]),
+            url_id=r["url_id"],
+            url=r["url"],
+            final_url=r["final_url"],
+            raw_blob_hash=r["raw_blob_hash"],
+            attempts=r["attempts"],
+            ready_at=from_db(r["ready_at"]),
+            source_id=r["source_id"],
+            discovered_at=from_db(r["discovered_at"]),
+            fetched_at=from_db(r["fetched_at"]),
+            content_type=r["content_type"],
+            feed_id=r["feed_id"],
+            feed_title=r["feed_title"],
+            feed_summary=r["feed_summary"],
+            feed_published_at=from_db(r["feed_published_at"]) if r["feed_published_at"] else None,
         )
         for r in rows
     ]
