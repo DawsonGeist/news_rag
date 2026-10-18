@@ -1,0 +1,31 @@
+# Copy to config/newsrag.toml (gitignored) and edit, or point $NEWSRAG_CONFIG at a file.
+# Every key is optional; defaults are in src/newsrag/config.py.
+# $NEWSRAG_DATA_DIR overrides data_dir.
+
+data_dir = "data"
+# user_agent = "newsrag/0.1 (+https://github.com/DawsonGeist/news_rag)"
+
+[fetch]
+global_concurrency = 64
+default_crawl_delay_s = 5.0
+max_crawl_delay_s = 60.0
+request_timeout_s = 30.0
+max_body_bytes = 5000000
+max_attempts = 5
+lease_s = 300
+
+[poll]
+min_interval_s = 300
+default_interval_s = 1800
+max_interval_s = 21600
+pause_after_failures = 10
+
+[writer]
+flush_rows = 500
+flush_seconds = 60.0
+# extract_workers = 6        # default: CPU count - 2
+
+[retention]
+raw_days = 60
+stage_event_days = 30
+poll_log_days = 14

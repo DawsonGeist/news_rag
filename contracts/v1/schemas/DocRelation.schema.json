@@ -1,0 +1,63 @@
+{
+  "$defs": {
+    "RelationType": {
+      "enum": [
+        "dup_of",
+        "near_dup_of",
+        "published_by"
+      ],
+      "title": "RelationType",
+      "type": "string"
+    }
+  },
+  "$id": "newsrag/contracts/v1/DocRelation",
+  "additionalProperties": false,
+  "description": "Typed, scored edge between documents (or document -> source). Only relation types\nwith measured high accuracy are written.",
+  "properties": {
+    "created_at": {
+      "format": "date-time",
+      "title": "Created At",
+      "type": "string"
+    },
+    "dst_id": {
+      "description": "doc_id for dup relations, source_id for published_by.",
+      "title": "Dst Id",
+      "type": "string"
+    },
+    "method": {
+      "title": "Method",
+      "type": "string"
+    },
+    "relation": {
+      "$ref": "#/$defs/RelationType"
+    },
+    "schema_version": {
+      "default": "1.0",
+      "pattern": "^1\\.\\d+$",
+      "title": "Schema Version",
+      "type": "string"
+    },
+    "score": {
+      "maximum": 1.0,
+      "minimum": 0.0,
+      "title": "Score",
+      "type": "number"
+    },
+    "src_doc_id": {
+      "pattern": "^[0-9a-f]{32}$",
+      "title": "Src Doc Id",
+      "type": "string"
+    }
+  },
+  "required": [
+    "relation",
+    "src_doc_id",
+    "dst_id",
+    "score",
+    "method",
+    "created_at"
+  ],
+  "title": "DocRelation",
+  "type": "object",
+  "x-stability": "provisional"
+}

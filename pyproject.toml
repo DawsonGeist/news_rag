@@ -1,0 +1,65 @@
+[build-system]
+requires = ["setuptools>=69", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "newsrag"
+version = "0.1.0"
+description = "Local-first, stance-aware search over news and long-form content."
+readme = "README.md"
+requires-python = ">=3.12"
+dependencies = [
+    "pydantic>=2.8",
+    "pyyaml>=6.0",
+    "typer>=0.12",
+    "httpx[http2]>=0.27",
+    "feedparser>=6.0.11",
+    "trafilatura>=1.12",
+    "py3langid>=0.3",
+    "protego>=0.3",
+    "tldextract>=5.1",
+    "zstandard>=0.23",
+    "pyarrow>=17",
+    "duckdb>=1.1",
+    "python-ulid>=2.7",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=8",
+    "pytest-asyncio>=0.24",
+    "respx>=0.21",
+    "ruff>=0.6",
+    "mypy>=1.11",
+    "types-PyYAML",
+]
+
+[project.scripts]
+newsrag = "newsrag.cli:app"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.setuptools.package-data]
+newsrag = ["py.typed", "contracts/v1/sql/*.sql"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+asyncio_mode = "auto"
+
+[tool.ruff]
+line-length = 100
+target-version = "py312"
+src = ["src", "tests"]
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP", "B", "SIM"]
+
+[tool.ruff.lint.flake8-bugbear]
+extend-immutable-calls = ["typer.Option", "typer.Argument"]
+
+[tool.mypy]
+python_version = "3.12"
+strict = true
+plugins = ["pydantic.mypy"]
+mypy_path = "src"

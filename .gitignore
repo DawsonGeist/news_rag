@@ -1,0 +1,31 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+venv/
+build/
+dist/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+
+# Runtime data (archive, crawl state, segments). Never commit.
+/data/
+
+# Local config overrides
+/config/newsrag.toml
+
+# The full world feed list is large and only its US slice is used;
+# the derived feeds/candidates_us.yaml is committed instead.
+/feeds/source/feeds_world.yaml
+
+# Golden fixtures captured from real publishers stay local (copyright);
+# synthetic fixtures under tests/fixtures/synthetic are committed.
+/tests/fixtures/golden/
+
+# Editors / OS
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db

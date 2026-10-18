@@ -1,0 +1,127 @@
+{
+  "$defs": {
+    "TextLocator": {
+      "additionalProperties": false,
+      "description": "Span of a Document's ``extracted_text`` (field=\"body\") or ``title`` (field=\"title\").",
+      "properties": {
+        "end": {
+          "minimum": 0,
+          "title": "End",
+          "type": "integer"
+        },
+        "field": {
+          "default": "body",
+          "enum": [
+            "body",
+            "title"
+          ],
+          "title": "Field",
+          "type": "string"
+        },
+        "kind": {
+          "const": "text",
+          "default": "text",
+          "title": "Kind",
+          "type": "string"
+        },
+        "start": {
+          "minimum": 0,
+          "title": "Start",
+          "type": "integer"
+        }
+      },
+      "required": [
+        "start",
+        "end"
+      ],
+      "title": "TextLocator",
+      "type": "object"
+    }
+  },
+  "$id": "newsrag/contracts/v1/Mention",
+  "additionalProperties": false,
+  "description": "An NER span. ``locator.field == \"title\"`` means the article is *about* the entity\nrather than merely mentioning it (the overview's ``in_title``).",
+  "properties": {
+    "doc_id": {
+      "pattern": "^[0-9a-f]{32}$",
+      "title": "Doc Id",
+      "type": "string"
+    },
+    "locator": {
+      "$ref": "#/$defs/TextLocator"
+    },
+    "mention_id": {
+      "pattern": "^[0-9a-f]{32}$",
+      "title": "Mention Id",
+      "type": "string"
+    },
+    "ner_confidence": {
+      "anyOf": [
+        {
+          "maximum": 1.0,
+          "minimum": 0.0,
+          "type": "number"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Ner Confidence"
+    },
+    "ner_label": {
+      "title": "Ner Label",
+      "type": "string"
+    },
+    "ner_model_id": {
+      "title": "Ner Model Id",
+      "type": "string"
+    },
+    "pipeline_version": {
+      "title": "Pipeline Version",
+      "type": "string"
+    },
+    "revision": {
+      "minimum": 1,
+      "title": "Revision",
+      "type": "integer"
+    },
+    "schema_version": {
+      "default": "1.0",
+      "pattern": "^1\\.\\d+$",
+      "title": "Schema Version",
+      "type": "string"
+    },
+    "segment_id": {
+      "anyOf": [
+        {
+          "pattern": "^[0-9a-f]{32}$",
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "description": "Sentence segment; None for title.",
+      "title": "Segment Id"
+    },
+    "surface": {
+      "title": "Surface",
+      "type": "string"
+    }
+  },
+  "required": [
+    "mention_id",
+    "doc_id",
+    "revision",
+    "surface",
+    "locator",
+    "ner_label",
+    "ner_model_id",
+    "pipeline_version"
+  ],
+  "title": "Mention",
+  "type": "object",
+  "x-stability": "provisional"
+}

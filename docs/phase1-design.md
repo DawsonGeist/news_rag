@@ -1,0 +1,219 @@
+# Phase 1 design: vet, poll, fetch, extract, store
+
+Status: draft for review · 2026-10-17
+
+Phase 1 builds an archive. It continuously discovers US news articles from vetted RSS feeds, stores their raw HTML and an extracted Document, and survives power loss. It also measures ingest lag from the first day. Search is not part of Phase 1, but everything downstream (segmenting, embedding, NER) will be computed from this archive and can be recomputed.
+
+Read [contracts/v1/README.md](../contracts/v1/README.md) first. This document assumes it.
+
+## Scope
+
+| # | Component | Phase 1 deliverable |
+| --- | --- | --- |
+| 1 | Feed vetter | Stage A (offline list extraction) is done. Stage B checks each feed; stage C samples articles from it. |
+| 2 | Feed poller | Conditional GETs, adaptive intervals, frontier inserts |
+| 3 | Article fetcher | Polite async fetch, robots.txt, raw blob store |
+| 4 | Extractor | Blob to Document (text, date, language, content kind) |
+| 8 | Storage writer | Parquet table files, manifest, recovery, compaction, retention |
+| 13 | Observability (part) | `stage_events`, `newsrag report lag`, the kill test |
+
+## Process model
+
+```
+             feeds (active)                 frontier                          table_files
+ vetter ──▶ [SQLite] ──▶ poller ──▶ [pending] ──▶ fetcher ──▶ [fetched] ──▶ writer ──▶ Parquet
+  (on demand)                         │                  │                     │ (pool of extractors)
+                                      └── stage_events ◀─┴─────────────────────┘
+```
+
+- Each component is a long-running CLI process: `newsrag run poller`, `newsrag run fetcher` and `newsrag run writer`. `newsrag run all` supervises all three as child processes and restarts any that crash.
+- **The work queue is the `frontier` table.** Workers claim rows with a lease (`lease_owner`, `lease_expires_at`) inside a short transaction. If a worker dies, its lease expires and another worker reclaims the row. Several fetcher processes can therefore share the queue, which is how fetching scales.
+- The writer owns a `ProcessPoolExecutor` of extractors. Extraction is a pure function, `(blob bytes, frontier hints) → Document`, so it can later move anywhere. Every commit still goes through the single writer.
+- SQLite is fine at this scale. At 50k articles a day, frontier writes are well under 10 per second. If Phase 1 ever needs fetchers on several machines, the crawl state moves to Postgres behind the same table contracts.
+
+### Frontier state machine
+
+```
+pending ──claim──▶ fetching ──ok──▶ fetched ──claim──▶ extracting ──commit──▶ stored
+   ▲                  │                                     │
+   └──retry/backoff───┤                                     └──error──▶ fetched (retry) / failed
+                      ├──robots/non-HTML/too large──▶ skipped
+                      └──max attempts──▶ failed
+stored ──feed reports update──▶ pending (low priority re-fetch)
+```
+
+- Retries back off exponentially: 1 min × 4^attempt with ±20% jitter, up to `fetch.max_attempts` (5).
+- `429` and `503` honour `Retry-After` and also push back the host's `backoff_until`.
+- `404` and `410` fail immediately. Other `4xx` responses get one retry.
+
+## Data layout
+
+```
+data/                         ($NEWSRAG_DATA_DIR; Linux filesystem under WSL, never /mnt/c)
+  state/crawl.sqlite3         crawl state + manifest (WAL)
+  raw/ab/cd/<sha256>.html.zst raw bodies, zstd level 9, rolling retention (default 60 days)
+  tables/documents/
+    hot/part-<ulid>.parquet   small parts written every flush
+    2026/10/part-<ulid>.parquet  compacted monthly parts
+  tmp/                        staging for atomic writes; emptied on startup
+  logs/
+```
+
+- Readers must list files from `table_files WHERE state='committed'`, never by globbing the directory.
+- DuckDB reads them with `read_parquet([...])`.
+
+## Component designs
+
+### 1. Feed vetter
+
+**Stage A (done):** `newsrag feeds candidates` reads `feeds/source/feeds_world.yaml` and `feeds/supplement_us.yaml` and writes [feeds/candidates_us.yaml](../feeds/candidates_us.yaml). The current run produced:
+
+- 10,839 candidates, of which 9,069 are text feeds and 1,770 are audio feeds (podcasts, kept for a future transcription pipeline).
+- 120 non-English domains dropped.
+- 91 feeds dropped for being in the "Other" category.
+
+**Stage B, the feed check (text feeds only):** fetch the feed through the fetcher's politeness layer and parse it with feedparser. It records:
+
+- format and item count
+- the share of items with dates, and the newest item's date
+- an estimate of items per day
+- the share of items with audio enclosures
+- whether robots.txt allows the feed
+
+**Stage C, the article sample:** fetch up to 3 recent items per feed (at most 5 per source) and run the real extractor on them. It records:
+
+- the share of articles yielding full text, and the share showing paywall markers
+- the share in English, and the share where a date was found
+- the median word count
+
+**Verdict rules** (thresholds go in config and are tuned after the first run):
+
+| Verdict | Condition |
+| --- | --- |
+| reject | Unreachable after 3 tries, unparseable, empty, stale (newest item over 30 days old), robots disallows, `paywall_ratio ≥ 0.5`, `english_ratio < 0.5`, or audio |
+| review | `full_text_ratio < 0.67`, `published_at_found_ratio < 0.5`, or `median_word_count < 150` |
+| accept | Everything else |
+
+- Each run appends to `feed_health` and sets `feeds.status` from the verdict.
+- `newsrag feeds export` writes the accepted list to `feeds/vetted_us.yaml` (committed) so another machine can reproduce the set.
+- Vetting about 9k feeds plus about 27k sample articles at polite rates takes several hours. Runs can resume, and finished feeds are skipped.
+
+### 2. Feed poller
+
+- Single asyncio process that polls feeds where `status='active' AND next_poll_at <= now`.
+- **Conditional GET** with the stored `etag` and `last_modified`. A `304` counts as a successful poll with no new items.
+- **Adaptive interval:** a poll that finds new items multiplies the interval by 0.7. A poll with nothing new multiplies it by 1.5. The result is clamped to [5 min, 6 h], and the first interval is 30 min. Each `next_poll_at` gets ±10% jitter so polls don't synchronize.
+- Feed hosts use the same per-host politeness as articles (the `hosts` table).
+- **For each item:**
+  - normalize the link
+  - compute `url_id`
+  - `INSERT ... ON CONFLICT DO NOTHING` into `frontier` with `state='pending'` and the feed's title, summary, published and updated hints
+  - insert into `url_sightings`
+  - write a `discover` stage event for new URLs only
+- If an existing stored URL's feed `updated` timestamp moves forward or its title changes, the row is re-queued at low priority (the revision policy).
+- After `pause_after_failures` (10) consecutive failures, the feed is set to `paused` with a reason.
+
+### 3. Article fetcher
+
+- **Concurrency:** asyncio with httpx (HTTP/2 enabled). At most `global_concurrency` (64) requests in flight and **one per host**. The host's `next_allowed_at` is set to now + `crawl_delay_s`: robots.txt `Crawl-delay` if present, else 5 s, capped at 60 s.
+- **Claiming work:** one transaction leases a batch of up to 200 ready rows, spread across hosts whose `next_allowed_at <= now`. This stops one big publisher from starving the rest.
+- **robots.txt:** parsed with protego and cached in `hosts` for 24 h. A `5xx` robots response means "disallow for now". A `4xx` means "allow". A disallowed URL is set to `skipped` with `skip_reason='robots'`.
+- **Request:** a `User-Agent` with the project URL, gzip/br accepted, redirects followed (up to 5), and a body limit of 5 MB. Only `text/html` and `application/xhtml+xml` are kept; anything else becomes `skipped`.
+- **On success:**
+  1. sha256 the body
+  2. if the blob is new, write it compressed to `tmp/`, fsync, rename, then fsync the directory
+  3. in one transaction, insert the `blobs` row (with `expires_at = now + retention.raw_days`), set the frontier row to `fetched` (with `final_url`, `http_status`, `raw_blob_hash`), and write a `fetch` stage event
+- No JavaScript rendering in Phase 1. The vetter flags sites that need it, because their full-text ratio comes out low.
+
+### 4. Extractor (runs inside the writer's process pool)
+
+The extractor takes the decompressed blob, the final URL and the frontier hints, and returns a Document or an error code.
+
+1. **Parse:** run lxml once, then pull the `rel=canonical` link, the JSON-LD blocks (`NewsArticle` and similar) and the meta tags.
+2. **Canonical URL:** `ids.choose_canonical`, then `doc_id`.
+3. **Body:** trafilatura `bare_extraction` with precision favoured and comments excluded. The text is normalized to the contract: NFC, each paragraph stripped, paragraphs joined with `\n\n`, and the zero-width characters and NBSPs that some sites inject removed or replaced.
+4. **`published_at`:** the first available of JSON-LD `datePublished`, then `article:published_time`, the feed item date, a URL path date (`/2026/10/17/`), and finally trafilatura's date guess (source `page_text`). Dates without a timezone are treated as UTC only when they come from the feed, and otherwise discarded rather than guessed. `modified_at` comes from JSON-LD `dateModified` or `article:modified_time`.
+5. **Language:** py3langid on the first 2,000 characters. Non-English documents are still stored, because downstream filters on `language='en'`.
+6. **Content kind:**
+   - `suspected_paywall` if JSON-LD `isAccessibleForFree` is false, or known paywall markers appear together with short text
+   - `non_article` if there are fewer than 80 words and no article JSON-LD
+   - `summary_only` if the extracted text is no longer than the feed summary
+   - otherwise `full_text`
+7. **Assemble:** `content_hash` and `word_count` are computed, and `extractor_version` is a hand-bumped string plus the trafilatura version.
+
+Golden tests cover each heuristic.
+
+### 8. Storage writer
+
+- **Extraction loop:** lease `fetched` rows (setting them to `extracting`), submit them to the pool and buffer the resulting Documents.
+- **Flush** when `flush_rows` (500) or `flush_seconds` (60) is reached. The 60 s flush bounds the writer's share of ingest lag.
+  1. **Resolve revisions** for each Document against `doc_revisions` and the other Documents in the same batch:
+     - known `content_hash` for that `doc_id`: no row is written, and the frontier row is set to stored with the existing revision
+     - new `content_hash`: `revision = max + 1`
+  2. **Write** the Parquet part (zstd, explicit Arrow schema derived from the Document model) to `tmp/`, fsync, rename into `hot/`, fsync the directory.
+  3. **Commit** in one transaction: insert the `table_files` row (with sha256 and row count), insert the `doc_revisions` rows, set the frontier rows to `stored` (with `doc_id` and `revision`), and write the `extract` and `store` stage events.
+- **Recovery on startup:** the durability protocol in the contracts README, plus resetting `extracting` rows whose lease expired back to `fetched`. Extraction is deterministic, so redoing it is safe.
+- **Compaction** (hourly; `newsrag run writer` does it between flushes):
+  1. Merge closed `hot/` parts into monthly parts of about 128 MB.
+  2. In one transaction, insert the new `table_files` row, mark the old rows `superseded`, and repoint `doc_revisions.file_id`.
+  3. Delete the old files afterwards. If the process crashes before deleting them, startup cleanup removes them.
+- **Raw retention** (daily): select `blobs` where `state='present' AND expires_at < now`, mark them `expired` in a transaction, then unlink. Blobs referenced by golden fixtures have `expires_at = NULL`.
+
+### 13. Observability (Phase 1 part)
+
+- Every stage writes `StageEvent`s through one helper, `obs.events.record(...)`.
+- `newsrag report lag [--since 24h] [--by source|stage]` prints discovery, ingest and end-to-end lag at p50, p95 and p99. It also prints the queue depth for each frontier state and the active, paused and rejected feed counts.
+- `newsrag report disk` prints blob, Parquet and SQLite sizes, plus a fill forecast for the data volume.
+- Raw stage events are kept 30 days, then rolled up into hourly percentiles per stage and source.
+
+## Testing
+
+- **Unit tests:** IDs, the contracts, date parsing, text normalization and the verdict rules.
+- **Synthetic fixtures** (committed, `tests/fixtures/synthetic/`):
+  - hand-written feed XML: RSS 2.0, Atom, a missing-dates case and an audio-enclosures case
+  - article HTML: a full article, a paywall, a non-article page, a JSON-LD date, a meta-only date and a cross-site canonical
+- **Golden fixtures** (local only, `tests/fixtures/golden/`, gitignored for copyright): about 40 real pages across 20 publishers, each with a hand-checked expected title, date, content kind and first and last paragraph. `newsrag fixtures capture <url>` saves new ones.
+- **Integration tests:** the full poll → fetch → extract → store path against a local HTTP server (`respx` or a `pytest` fixture server) serving the synthetic fixtures.
+- **Kill test** (`newsrag test kill`): 20 iterations. Each starts the pipeline against the local fixture server and `SIGKILL`s a random process at a random moment. It then restarts and checks the invariants:
+  - every `committed` file exists and matches its sha256
+  - every `doc_revisions` row points at a committed file that contains it
+  - there are no duplicate `(doc_id, revision)` pairs
+  - every frontier URL eventually reaches `stored`, `skipped` or `failed`
+  - no files are left in `tmp/`
+
+## Gate 1: exit criteria for Phase 1
+
+| # | Criterion | Measured by |
+| --- | --- | --- |
+| G1.1 | At least 1,000 accepted text feeds, with every candidate holding a verdict | `feed_health` |
+| G1.2 | 72 hours of continuous unattended running with no manual intervention | supervisor log |
+| G1.3 | Ingest lag p95 under 10 min and p99 under 30 min over the 72 h | `report lag` |
+| G1.4 | The kill test passes 20 of 20 iterations, and one real power-pull test passes | `test kill` + manual |
+| G1.5 | Golden set: date within ±24 h on 90% or more, content kind correct on 95% or more, first and last paragraph present on 90% or more of full-text pages | golden tests |
+| G1.6 | Re-extracting the archive from blobs reproduces identical `content_hash` values for an unchanged `extractor_version` | `newsrag reextract --verify` |
+| G1.7 | The disk forecast fits on the current SSD for 12 months at the observed rate | `report disk` |
+
+Gate 1 also starts the labeling of the 30 opinion queries that Phase 2's retrieval evaluation needs.
+
+Gates 2 and 3 are outlined here and get detailed in their own design docs:
+
+- **Gate 2** (the retrieval evaluation passes): on the 30 labeled queries, recall@50 of supporting articles reaches the target set when the labels exist, and the index lag p95 is under 15 min.
+- **Gate 3** (stance quality): precision@10 of supporting versus opposing results on the labeled set, and the opposing-views section is correct on most queries.
+
+## Build order within Phase 1
+
+1. **P1.0** (done): skeleton, contracts, state DDL, candidate extraction.
+2. **P1.1:** blob store, table-file writer, recovery, plus their unit tests and kill-test harness. Everything else commits through this, so it comes first.
+3. **P1.2:** fetcher with robots.txt and politeness, against the local fixture server.
+4. **P1.3:** extractor, plus synthetic and golden fixtures.
+5. **P1.4:** poller and the supervisor (`run all`).
+6. **P1.5:** vetter stages B and C, reusing the fetcher and extractor. Run it on all 9,069 text candidates.
+7. **P1.6:** lag and disk reports, compaction and retention jobs.
+8. **P1.7:** the 72 h soak, the power-pull test and the Gate 1 review.
+
+## Risks
+
+- **Disk:** see G1.7. At 30k articles a day, raw blobs come to about 1.5–3 GB a day, which is about 90–180 GB at 60 days. Extracted text is about 0.1 GB a day.
+- **Being blocked:** some publishers block non-browser clients. Phase 1 stays polite and identifiable and does not evade blocks. Feeds that block us are rejected.
+- **JavaScript-only sites:** these get flagged by the vetter. A headless-browser fetcher is a later, optional component behind the same blob contract.
+- **Extraction quality varies by CMS:** the golden set must cover the major CMS families (WordPress, Arc, Brightspot, custom).

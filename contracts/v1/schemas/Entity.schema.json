@@ -1,0 +1,85 @@
+{
+  "$defs": {
+    "EntityType": {
+      "enum": [
+        "person",
+        "organization",
+        "location",
+        "event",
+        "law",
+        "product",
+        "work",
+        "other"
+      ],
+      "title": "EntityType",
+      "type": "string"
+    }
+  },
+  "$id": "newsrag/contracts/v1/Entity",
+  "additionalProperties": false,
+  "description": "A node in the entity map. ``entity_id`` is ``\"wd:<QID>\"`` when linked to Wikidata,\nelse ``\"local:<hash32(type + ':' + normalized surface)>\"`` for unresolved mentions,\nwhich stay as their own nodes rather than being forced onto a KB entry.",
+  "properties": {
+    "aliases": {
+      "items": {
+        "type": "string"
+      },
+      "title": "Aliases",
+      "type": "array"
+    },
+    "canonical_name": {
+      "title": "Canonical Name",
+      "type": "string"
+    },
+    "created_at": {
+      "format": "date-time",
+      "title": "Created At",
+      "type": "string"
+    },
+    "description": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Description"
+    },
+    "entity_id": {
+      "title": "Entity Id",
+      "type": "string"
+    },
+    "kb_id": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Kb Id"
+    },
+    "schema_version": {
+      "default": "1.0",
+      "pattern": "^1\\.\\d+$",
+      "title": "Schema Version",
+      "type": "string"
+    },
+    "type": {
+      "$ref": "#/$defs/EntityType"
+    }
+  },
+  "required": [
+    "entity_id",
+    "canonical_name",
+    "type",
+    "created_at"
+  ],
+  "title": "Entity",
+  "type": "object",
+  "x-stability": "provisional"
+}

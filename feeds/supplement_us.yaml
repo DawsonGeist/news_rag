@@ -1,0 +1,315 @@
+# Hand-curated US outlets that are missing from (or under-covered in) the source list.
+#
+# Same shape as feeds/source/feeds_world.yaml. URLs were written from memory and are
+# UNVERIFIED: the feed vetter decides what is reachable, open-access and fresh.
+# Known-paywalled outlets are included on purpose as negative test cases for the
+# paywall detector; expect them to be rejected.
+#
+# Not included because they publish no public RSS: AP News, Reuters.
+#
+# Categories must match the source list's names:
+#   'Politics & Society', 'World / International', 'Business & Economy', Opinion,
+#   'Science & Technology', 'Local News', 'Lifestyle & Culture', Sports
+
+'United States':
+  cnn.com:
+    name: CNN
+    languages: [en]
+    notes: rss.cnn.com feeds are known to update irregularly.
+    feeds:
+      'Politics & Society':
+        - 'http://rss.cnn.com/rss/cnn_allpolitics.rss'
+      'World / International':
+        - 'http://rss.cnn.com/rss/cnn_topstories.rss'
+        - 'http://rss.cnn.com/rss/cnn_world.rss'
+      'Business & Economy':
+        - 'http://rss.cnn.com/rss/money_latest.rss'
+  nbcnews.com:
+    name: NBC News
+    languages: [en]
+    feeds:
+      'Politics & Society':
+        - 'https://feeds.nbcnews.com/nbcnews/public/politics'
+      'World / International':
+        - 'https://feeds.nbcnews.com/nbcnews/public/news'
+  cbsnews.com:
+    name: CBS News
+    languages: [en]
+    feeds:
+      'Politics & Society':
+        - 'https://www.cbsnews.com/latest/rss/politics'
+      'World / International':
+        - 'https://www.cbsnews.com/latest/rss/main'
+  go.com:
+    name: ABC News
+    languages: [en]
+    feeds:
+      'Politics & Society':
+        - 'https://abcnews.go.com/abcnews/politicsheadlines'
+      'World / International':
+        - 'https://abcnews.go.com/abcnews/topstories'
+  politico.com:
+    name: Politico
+    languages: [en]
+    feeds:
+      'Politics & Society':
+        - 'https://rss.politico.com/politics-news.xml'
+        - 'https://rss.politico.com/congress.xml'
+        - 'https://rss.politico.com/economy.xml'
+  axios.com:
+    name: Axios
+    languages: [en]
+    feeds:
+      'Politics & Society':
+        - 'https://api.axios.com/feed/'
+  pbs.org:
+    name: PBS NewsHour
+    languages: [en]
+    feeds:
+      'Politics & Society':
+        - 'https://www.pbs.org/newshour/feeds/rss/politics'
+      'World / International':
+        - 'https://www.pbs.org/newshour/feeds/rss/headlines'
+  usatoday.com:
+    name: USA Today
+    languages: [en]
+    feeds:
+      'World / International':
+        - 'http://rssfeeds.usatoday.com/usatoday-NewsTopStories'
+  nypost.com:
+    name: New York Post
+    languages: [en]
+    feeds:
+      'Politics & Society':
+        - 'https://nypost.com/politics/feed/'
+      Opinion:
+        - 'https://nypost.com/opinion/feed/'
+  foxnews.com:
+    name: Fox News
+    languages: [en]
+    feeds:
+      'Politics & Society':
+        - 'https://moxie.foxnews.com/google-publisher/politics.xml'
+      Opinion:
+        - 'https://moxie.foxnews.com/google-publisher/opinion.xml'
+  washingtonexaminer.com:
+    name: Washington Examiner
+    languages: [en]
+    feeds:
+      'Politics & Society':
+        - 'https://www.washingtonexaminer.com/feed'
+  washingtontimes.com:
+    name: The Washington Times
+    languages: [en]
+    feeds:
+      'Politics & Society':
+        - 'https://www.washingtontimes.com/rss/headlines/news/politics/'
+      Opinion:
+        - 'https://www.washingtontimes.com/rss/headlines/opinion/'
+  nationalreview.com:
+    name: National Review
+    languages: [en]
+    feeds:
+      Opinion:
+        - 'https://www.nationalreview.com/feed/'
+  thefederalist.com:
+    name: The Federalist
+    languages: [en]
+    feeds:
+      Opinion:
+        - 'https://thefederalist.com/feed/'
+  dailycaller.com:
+    name: The Daily Caller
+    languages: [en]
+    feeds:
+      'Politics & Society':
+        - 'https://dailycaller.com/feed/'
+  dailywire.com:
+    name: The Daily Wire
+    languages: [en]
+    feeds:
+      'Politics & Society':
+        - 'https://www.dailywire.com/feeds/rss.xml'
+  freebeacon.com:
+    name: Washington Free Beacon
+    languages: [en]
+    feeds:
+      'Politics & Society':
+        - 'https://freebeacon.com/feed/'
+  newsmax.com:
+    name: Newsmax
+    languages: [en]
+    feeds:
+      'Politics & Society':
+        - 'https://www.newsmax.com/rss/Newsfront/16/'
+  theblaze.com:
+    name: TheBlaze
+    languages: [en]
+    feeds:
+      'Politics & Society':
+        - 'https://www.theblaze.com/feeds/feed.rss'
+  theamericanconservative.com:
+    name: The American Conservative
+    languages: [en]
+    feeds:
+      Opinion:
+        - 'https://www.theamericanconservative.com/feed/'
+  reason.com:
+    name: Reason
+    languages: [en]
+    feeds:
+      Opinion:
+        - 'https://reason.com/feed/'
+  realclearpolitics.com:
+    name: RealClearPolitics
+    languages: [en]
+    feeds:
+      'Politics & Society':
+        - 'https://www.realclearpolitics.com/index.xml'
+  semafor.com:
+    name: Semafor
+    languages: [en]
+    feeds:
+      'Politics & Society':
+        - 'https://www.semafor.com/rss.xml'
+  rollcall.com:
+    name: Roll Call
+    languages: [en]
+    feeds:
+      'Politics & Society':
+        - 'https://rollcall.com/feed/'
+  csmonitor.com:
+    name: The Christian Science Monitor
+    languages: [en]
+    feeds:
+      'Politics & Society':
+        - 'https://rss.csmonitor.com/feeds/usa'
+  time.com:
+    name: TIME
+    languages: [en]
+    feeds:
+      'World / International':
+        - 'https://time.com/feed/'
+  newsweek.com:
+    name: Newsweek
+    languages: [en]
+    feeds:
+      'World / International':
+        - 'https://www.newsweek.com/rss'
+  vox.com:
+    name: Vox
+    languages: [en]
+    feeds:
+      'Politics & Society':
+        - 'https://www.vox.com/rss/index.xml'
+  slate.com:
+    name: Slate
+    languages: [en]
+    feeds:
+      Opinion:
+        - 'https://slate.com/feeds/all.rss'
+  huffpost.com:
+    name: HuffPost
+    languages: [en]
+    feeds:
+      'Politics & Society':
+        - 'https://www.huffpost.com/section/politics/feed'
+      'World / International':
+        - 'https://www.huffpost.com/section/front-page/feed'
+  salon.com:
+    name: Salon
+    languages: [en]
+    feeds:
+      Opinion:
+        - 'https://www.salon.com/feed/'
+  motherjones.com:
+    name: Mother Jones
+    languages: [en]
+    feeds:
+      'Politics & Society':
+        - 'https://www.motherjones.com/feed/'
+  thenation.com:
+    name: The Nation
+    languages: [en]
+    feeds:
+      Opinion:
+        - 'https://www.thenation.com/feed/?post_type=article'
+  theintercept.com:
+    name: The Intercept
+    languages: [en]
+    feeds:
+      'Politics & Society':
+        - 'https://theintercept.com/feed/?rss'
+  jacobin.com:
+    name: Jacobin
+    languages: [en]
+    feeds:
+      Opinion:
+        - 'https://jacobin.com/feed/'
+  commondreams.org:
+    name: Common Dreams
+    languages: [en]
+    feeds:
+      'Politics & Society':
+        - 'https://www.commondreams.org/rss.xml'
+  democracynow.org:
+    name: Democracy Now!
+    languages: [en]
+    feeds:
+      'Politics & Society':
+        - 'https://www.democracynow.org/democracynow.rss'
+  propublica.org:
+    name: ProPublica
+    languages: [en]
+    feeds:
+      'Politics & Society':
+        - 'https://www.propublica.org/feeds/propublica/main'
+  19thnews.org:
+    name: The 19th
+    languages: [en]
+    feeds:
+      'Politics & Society':
+        - 'https://19thnews.org/feed/'
+  theguardian.com:
+    name: The Guardian (US edition)
+    languages: [en]
+    notes: UK publisher; US-news section only.
+    feeds:
+      'Politics & Society':
+        - 'https://www.theguardian.com/us-news/us-politics/rss'
+      'World / International':
+        - 'https://www.theguardian.com/us-news/rss'
+  insideclimatenews.org:
+    name: Inside Climate News
+    languages: [en]
+    feeds:
+      'Science & Technology':
+        - 'https://insideclimatenews.org/feed/'
+  utilitydive.com:
+    name: Utility Dive
+    languages: [en]
+    feeds:
+      'Business & Economy':
+        - 'https://www.utilitydive.com/feeds/news/'
+  # Paywalled: expected REJECT (negative cases for the paywall detector).
+  washingtonpost.com:
+    name: The Washington Post
+    languages: [en]
+    notes: Paywalled; negative test case.
+    feeds:
+      'Politics & Society':
+        - 'https://feeds.washingtonpost.com/rss/politics'
+  wsj.com:
+    name: The Wall Street Journal
+    languages: [en]
+    notes: Paywalled; negative test case.
+    feeds:
+      'World / International':
+        - 'https://feeds.a.dj.com/rss/RSSWorldNews.xml'
+  theatlantic.com:
+    name: The Atlantic
+    languages: [en]
+    notes: Metered paywall; may land in REVIEW.
+    feeds:
+      Opinion:
+        - 'https://www.theatlantic.com/feed/all/'

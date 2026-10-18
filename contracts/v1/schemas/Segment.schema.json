@@ -1,0 +1,207 @@
+{
+  "$defs": {
+    "PageLocator": {
+      "additionalProperties": false,
+      "description": "Span on one page of a paged source (court PDFs). Offsets index that page's text.",
+      "properties": {
+        "end": {
+          "minimum": 0,
+          "title": "End",
+          "type": "integer"
+        },
+        "kind": {
+          "const": "page",
+          "default": "page",
+          "title": "Kind",
+          "type": "string"
+        },
+        "page": {
+          "minimum": 1,
+          "title": "Page",
+          "type": "integer"
+        },
+        "start": {
+          "minimum": 0,
+          "title": "Start",
+          "type": "integer"
+        }
+      },
+      "required": [
+        "page",
+        "start",
+        "end"
+      ],
+      "title": "PageLocator",
+      "type": "object"
+    },
+    "SegmentLevel": {
+      "enum": [
+        "paragraph",
+        "sentence"
+      ],
+      "title": "SegmentLevel",
+      "type": "string"
+    },
+    "TextLocator": {
+      "additionalProperties": false,
+      "description": "Span of a Document's ``extracted_text`` (field=\"body\") or ``title`` (field=\"title\").",
+      "properties": {
+        "end": {
+          "minimum": 0,
+          "title": "End",
+          "type": "integer"
+        },
+        "field": {
+          "default": "body",
+          "enum": [
+            "body",
+            "title"
+          ],
+          "title": "Field",
+          "type": "string"
+        },
+        "kind": {
+          "const": "text",
+          "default": "text",
+          "title": "Kind",
+          "type": "string"
+        },
+        "start": {
+          "minimum": 0,
+          "title": "Start",
+          "type": "integer"
+        }
+      },
+      "required": [
+        "start",
+        "end"
+      ],
+      "title": "TextLocator",
+      "type": "object"
+    },
+    "TimeLocator": {
+      "additionalProperties": false,
+      "description": "Time range in an audio or video source, milliseconds from the start.",
+      "properties": {
+        "end_ms": {
+          "minimum": 0,
+          "title": "End Ms",
+          "type": "integer"
+        },
+        "kind": {
+          "const": "time",
+          "default": "time",
+          "title": "Kind",
+          "type": "string"
+        },
+        "start_ms": {
+          "minimum": 0,
+          "title": "Start Ms",
+          "type": "integer"
+        }
+      },
+      "required": [
+        "start_ms",
+        "end_ms"
+      ],
+      "title": "TimeLocator",
+      "type": "object"
+    }
+  },
+  "$id": "newsrag/contracts/v1/Segment",
+  "additionalProperties": false,
+  "description": "A paragraph or sentence of a Document revision.\n\n``segment_id = hash32(f\"{doc_id}:{revision}:{level}:{start}:{end}:{chunker_version}\")``,\nso re-running the same chunker is idempotent. Sentences point to their paragraph.\nFor text, ``text == extracted_text[locator.start:locator.end]``.",
+  "properties": {
+    "chunker_version": {
+      "title": "Chunker Version",
+      "type": "string"
+    },
+    "doc_id": {
+      "pattern": "^[0-9a-f]{32}$",
+      "title": "Doc Id",
+      "type": "string"
+    },
+    "level": {
+      "$ref": "#/$defs/SegmentLevel"
+    },
+    "locator": {
+      "discriminator": {
+        "mapping": {
+          "page": "#/$defs/PageLocator",
+          "text": "#/$defs/TextLocator",
+          "time": "#/$defs/TimeLocator"
+        },
+        "propertyName": "kind"
+      },
+      "oneOf": [
+        {
+          "$ref": "#/$defs/TextLocator"
+        },
+        {
+          "$ref": "#/$defs/TimeLocator"
+        },
+        {
+          "$ref": "#/$defs/PageLocator"
+        }
+      ],
+      "title": "Locator"
+    },
+    "parent_id": {
+      "anyOf": [
+        {
+          "pattern": "^[0-9a-f]{32}$",
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Parent Id"
+    },
+    "pipeline_version": {
+      "title": "Pipeline Version",
+      "type": "string"
+    },
+    "position": {
+      "description": "Order within (doc, revision, level).",
+      "minimum": 0,
+      "title": "Position",
+      "type": "integer"
+    },
+    "revision": {
+      "minimum": 1,
+      "title": "Revision",
+      "type": "integer"
+    },
+    "schema_version": {
+      "default": "1.0",
+      "pattern": "^1\\.\\d+$",
+      "title": "Schema Version",
+      "type": "string"
+    },
+    "segment_id": {
+      "pattern": "^[0-9a-f]{32}$",
+      "title": "Segment Id",
+      "type": "string"
+    },
+    "text": {
+      "title": "Text",
+      "type": "string"
+    }
+  },
+  "required": [
+    "segment_id",
+    "doc_id",
+    "revision",
+    "level",
+    "position",
+    "text",
+    "locator",
+    "chunker_version",
+    "pipeline_version"
+  ],
+  "title": "Segment",
+  "type": "object",
+  "x-stability": "provisional"
+}

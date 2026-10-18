@@ -1,0 +1,152 @@
+{
+  "$defs": {
+    "StanceLabel": {
+      "enum": [
+        "supports",
+        "neutral",
+        "opposes"
+      ],
+      "title": "StanceLabel",
+      "type": "string"
+    },
+    "TextLocator": {
+      "additionalProperties": false,
+      "description": "Span of a Document's ``extracted_text`` (field=\"body\") or ``title`` (field=\"title\").",
+      "properties": {
+        "end": {
+          "minimum": 0,
+          "title": "End",
+          "type": "integer"
+        },
+        "field": {
+          "default": "body",
+          "enum": [
+            "body",
+            "title"
+          ],
+          "title": "Field",
+          "type": "string"
+        },
+        "kind": {
+          "const": "text",
+          "default": "text",
+          "title": "Kind",
+          "type": "string"
+        },
+        "start": {
+          "minimum": 0,
+          "title": "Start",
+          "type": "integer"
+        }
+      },
+      "required": [
+        "start",
+        "end"
+      ],
+      "title": "TextLocator",
+      "type": "object"
+    }
+  },
+  "$id": "newsrag/contracts/v1/Snippet",
+  "additionalProperties": false,
+  "description": "N words either side of a resolved mention: the unit stance is judged on, and the join\npoint between the entity map and the vector index.",
+  "properties": {
+    "doc_id": {
+      "pattern": "^[0-9a-f]{32}$",
+      "title": "Doc Id",
+      "type": "string"
+    },
+    "entity_id": {
+      "title": "Entity Id",
+      "type": "string"
+    },
+    "locator": {
+      "$ref": "#/$defs/TextLocator"
+    },
+    "mention_id": {
+      "pattern": "^[0-9a-f]{32}$",
+      "title": "Mention Id",
+      "type": "string"
+    },
+    "pipeline_version": {
+      "title": "Pipeline Version",
+      "type": "string"
+    },
+    "revision": {
+      "minimum": 1,
+      "title": "Revision",
+      "type": "integer"
+    },
+    "schema_version": {
+      "default": "1.0",
+      "pattern": "^1\\.\\d+$",
+      "title": "Schema Version",
+      "type": "string"
+    },
+    "snippet_id": {
+      "pattern": "^[0-9a-f]{32}$",
+      "title": "Snippet Id",
+      "type": "string"
+    },
+    "stance_label": {
+      "anyOf": [
+        {
+          "$ref": "#/$defs/StanceLabel"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null
+    },
+    "stance_model_id": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Stance Model Id"
+    },
+    "stance_score": {
+      "anyOf": [
+        {
+          "maximum": 1.0,
+          "minimum": -1.0,
+          "type": "number"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Stance Score"
+    },
+    "text": {
+      "title": "Text",
+      "type": "string"
+    },
+    "window_words": {
+      "exclusiveMinimum": 0,
+      "title": "Window Words",
+      "type": "integer"
+    }
+  },
+  "required": [
+    "snippet_id",
+    "doc_id",
+    "revision",
+    "entity_id",
+    "mention_id",
+    "text",
+    "locator",
+    "window_words",
+    "pipeline_version"
+  ],
+  "title": "Snippet",
+  "type": "object",
+  "x-stability": "provisional"
+}

@@ -1,0 +1,268 @@
+{
+  "$defs": {
+    "FeedIssue": {
+      "description": "Reason codes attached to a FeedHealthReport.",
+      "enum": [
+        "unreachable",
+        "http_error",
+        "unparseable",
+        "empty",
+        "stale",
+        "audio_feed",
+        "robots_disallowed",
+        "paywalled",
+        "summary_only",
+        "non_english",
+        "no_dates",
+        "low_word_count",
+        "article_fetch_failed",
+        "duplicate_feed"
+      ],
+      "title": "FeedIssue",
+      "type": "string"
+    },
+    "FeedVerdict": {
+      "enum": [
+        "accept",
+        "reject",
+        "review"
+      ],
+      "title": "FeedVerdict",
+      "type": "string"
+    }
+  },
+  "$id": "newsrag/contracts/v1/FeedHealthReport",
+  "additionalProperties": false,
+  "description": "Result of vetting one feed. Ratios are over the items or sampled articles checked.",
+  "properties": {
+    "audio_enclosure_ratio": {
+      "default": 0.0,
+      "maximum": 1.0,
+      "minimum": 0.0,
+      "title": "Audio Enclosure Ratio",
+      "type": "number"
+    },
+    "checked_at": {
+      "format": "date-time",
+      "title": "Checked At",
+      "type": "string"
+    },
+    "crawl_delay_s": {
+      "anyOf": [
+        {
+          "minimum": 0.0,
+          "type": "number"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Crawl Delay S"
+    },
+    "detail": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Detail"
+    },
+    "english_ratio": {
+      "default": 0.0,
+      "maximum": 1.0,
+      "minimum": 0.0,
+      "title": "English Ratio",
+      "type": "number"
+    },
+    "est_items_per_day": {
+      "anyOf": [
+        {
+          "minimum": 0.0,
+          "type": "number"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Est Items Per Day"
+    },
+    "feed_format": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "description": "rss, atom, json or unknown.",
+      "title": "Feed Format"
+    },
+    "feed_id": {
+      "pattern": "^[0-9a-f]{32}$",
+      "title": "Feed Id",
+      "type": "string"
+    },
+    "feed_url": {
+      "title": "Feed Url",
+      "type": "string"
+    },
+    "final_feed_url": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Final Feed Url"
+    },
+    "full_text_ratio": {
+      "default": 0.0,
+      "maximum": 1.0,
+      "minimum": 0.0,
+      "title": "Full Text Ratio",
+      "type": "number"
+    },
+    "http_status": {
+      "anyOf": [
+        {
+          "type": "integer"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Http Status"
+    },
+    "issues": {
+      "items": {
+        "$ref": "#/$defs/FeedIssue"
+      },
+      "title": "Issues",
+      "type": "array"
+    },
+    "item_count": {
+      "default": 0,
+      "minimum": 0,
+      "title": "Item Count",
+      "type": "integer"
+    },
+    "items_with_date_ratio": {
+      "default": 0.0,
+      "maximum": 1.0,
+      "minimum": 0.0,
+      "title": "Items With Date Ratio",
+      "type": "number"
+    },
+    "median_word_count": {
+      "anyOf": [
+        {
+          "minimum": 0,
+          "type": "integer"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Median Word Count"
+    },
+    "newest_item_at": {
+      "anyOf": [
+        {
+          "format": "date-time",
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Newest Item At"
+    },
+    "paywall_ratio": {
+      "default": 0.0,
+      "maximum": 1.0,
+      "minimum": 0.0,
+      "title": "Paywall Ratio",
+      "type": "number"
+    },
+    "published_at_found_ratio": {
+      "default": 0.0,
+      "maximum": 1.0,
+      "minimum": 0.0,
+      "title": "Published At Found Ratio",
+      "type": "number"
+    },
+    "robots_allows_articles": {
+      "anyOf": [
+        {
+          "type": "boolean"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Robots Allows Articles"
+    },
+    "robots_allows_feed": {
+      "anyOf": [
+        {
+          "type": "boolean"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Robots Allows Feed"
+    },
+    "sample_fetch_ok": {
+      "default": 0,
+      "minimum": 0,
+      "title": "Sample Fetch Ok",
+      "type": "integer"
+    },
+    "sampled_articles": {
+      "default": 0,
+      "minimum": 0,
+      "title": "Sampled Articles",
+      "type": "integer"
+    },
+    "schema_version": {
+      "default": "1.0",
+      "pattern": "^1\\.\\d+$",
+      "title": "Schema Version",
+      "type": "string"
+    },
+    "verdict": {
+      "$ref": "#/$defs/FeedVerdict"
+    },
+    "vetter_version": {
+      "title": "Vetter Version",
+      "type": "string"
+    }
+  },
+  "required": [
+    "feed_id",
+    "feed_url",
+    "checked_at",
+    "vetter_version",
+    "verdict"
+  ],
+  "title": "FeedHealthReport",
+  "type": "object",
+  "x-stability": "stable"
+}

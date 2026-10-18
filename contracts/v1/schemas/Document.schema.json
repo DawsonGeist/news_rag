@@ -1,0 +1,267 @@
+{
+  "$defs": {
+    "ContentKind": {
+      "enum": [
+        "full_text",
+        "summary_only",
+        "suspected_paywall",
+        "non_article"
+      ],
+      "title": "ContentKind",
+      "type": "string"
+    },
+    "DateSource": {
+      "description": "Where ``published_at`` came from, most to least trustworthy.",
+      "enum": [
+        "json_ld",
+        "meta_tag",
+        "feed",
+        "url_path",
+        "page_text",
+        "platform",
+        "none"
+      ],
+      "title": "DateSource",
+      "type": "string"
+    },
+    "Pipeline": {
+      "enum": [
+        "rss",
+        "youtube",
+        "court"
+      ],
+      "title": "Pipeline",
+      "type": "string"
+    }
+  },
+  "$id": "newsrag/contracts/v1/Document",
+  "additionalProperties": false,
+  "description": "One revision of one piece of content.\n\nText rules for ``extracted_text`` (checked on construction): NFC-normalized,\nparagraphs separated by exactly one blank line (\"\\n\\n\"), no other newlines,\nno carriage returns, no leading or trailing whitespace. Downstream locators\nindex this exact string, so it is never modified after storage; a changed\ntext is a new revision.",
+  "properties": {
+    "authors": {
+      "items": {
+        "type": "string"
+      },
+      "title": "Authors",
+      "type": "array"
+    },
+    "canonical_url": {
+      "title": "Canonical Url",
+      "type": "string"
+    },
+    "content_hash": {
+      "pattern": "^[0-9a-f]{64}$",
+      "title": "Content Hash",
+      "type": "string"
+    },
+    "content_kind": {
+      "$ref": "#/$defs/ContentKind"
+    },
+    "discovered_at": {
+      "format": "date-time",
+      "title": "Discovered At",
+      "type": "string"
+    },
+    "doc_id": {
+      "pattern": "^[0-9a-f]{32}$",
+      "title": "Doc Id",
+      "type": "string"
+    },
+    "extracted_text": {
+      "title": "Extracted Text",
+      "type": "string"
+    },
+    "extractor_version": {
+      "title": "Extractor Version",
+      "type": "string"
+    },
+    "feed_id": {
+      "anyOf": [
+        {
+          "pattern": "^[0-9a-f]{32}$",
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "description": "First feed that surfaced this URL.",
+      "title": "Feed Id"
+    },
+    "feed_summary": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Feed Summary"
+    },
+    "feed_title": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Feed Title"
+    },
+    "fetched_at": {
+      "format": "date-time",
+      "title": "Fetched At",
+      "type": "string"
+    },
+    "final_url": {
+      "description": "URL actually fetched after redirects, normalized.",
+      "title": "Final Url",
+      "type": "string"
+    },
+    "ingested_at": {
+      "format": "date-time",
+      "title": "Ingested At",
+      "type": "string"
+    },
+    "language": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "description": "ISO 639-1, e.g. 'en'.",
+      "title": "Language"
+    },
+    "language_confidence": {
+      "anyOf": [
+        {
+          "maximum": 1.0,
+          "minimum": 0.0,
+          "type": "number"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Language Confidence"
+    },
+    "modified_at": {
+      "anyOf": [
+        {
+          "format": "date-time",
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Modified At"
+    },
+    "pipeline": {
+      "$ref": "#/$defs/Pipeline"
+    },
+    "pipeline_meta": {
+      "additionalProperties": true,
+      "description": "Pipeline-specific extras (video_id, docket_id, ...). JSON-serializable.",
+      "title": "Pipeline Meta",
+      "type": "object"
+    },
+    "pipeline_version": {
+      "title": "Pipeline Version",
+      "type": "string"
+    },
+    "published_at": {
+      "anyOf": [
+        {
+          "format": "date-time",
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Published At"
+    },
+    "published_at_source": {
+      "$ref": "#/$defs/DateSource",
+      "default": "none"
+    },
+    "raw_blob_hash": {
+      "pattern": "^[0-9a-f]{64}$",
+      "title": "Raw Blob Hash",
+      "type": "string"
+    },
+    "revision": {
+      "minimum": 1,
+      "title": "Revision",
+      "type": "integer"
+    },
+    "schema_version": {
+      "default": "1.0",
+      "pattern": "^1\\.\\d+$",
+      "title": "Schema Version",
+      "type": "string"
+    },
+    "source_id": {
+      "description": "Publisher key, e.g. 'foxnews.com'.",
+      "minLength": 1,
+      "title": "Source Id",
+      "type": "string"
+    },
+    "title": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Title"
+    },
+    "url_canonicalizer_version": {
+      "title": "Url Canonicalizer Version",
+      "type": "string"
+    },
+    "word_count": {
+      "minimum": 0,
+      "title": "Word Count",
+      "type": "integer"
+    }
+  },
+  "required": [
+    "doc_id",
+    "revision",
+    "pipeline",
+    "source_id",
+    "canonical_url",
+    "url_canonicalizer_version",
+    "final_url",
+    "extracted_text",
+    "content_kind",
+    "word_count",
+    "discovered_at",
+    "fetched_at",
+    "ingested_at",
+    "content_hash",
+    "raw_blob_hash",
+    "extractor_version",
+    "pipeline_version"
+  ],
+  "title": "Document",
+  "type": "object",
+  "x-stability": "stable"
+}

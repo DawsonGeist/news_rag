@@ -1,0 +1,139 @@
+{
+  "$defs": {
+    "FeedMedium": {
+      "enum": [
+        "text",
+        "audio",
+        "video"
+      ],
+      "title": "FeedMedium",
+      "type": "string"
+    },
+    "FeedOrigin": {
+      "enum": [
+        "feeds_yaml",
+        "supplement",
+        "manual"
+      ],
+      "title": "FeedOrigin",
+      "type": "string"
+    }
+  },
+  "$id": "newsrag/contracts/v1/FeedCandidate",
+  "additionalProperties": false,
+  "description": "A feed from a curated list, before vetting.",
+  "properties": {
+    "categories": {
+      "description": "First entry is the primary category.",
+      "items": {
+        "type": "string"
+      },
+      "minItems": 1,
+      "title": "Categories",
+      "type": "array"
+    },
+    "country": {
+      "title": "Country",
+      "type": "string"
+    },
+    "display_name": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Display Name"
+    },
+    "feed_id": {
+      "pattern": "^[0-9a-f]{32}$",
+      "title": "Feed Id",
+      "type": "string"
+    },
+    "feed_url": {
+      "title": "Feed Url",
+      "type": "string"
+    },
+    "listed_avg_article_length": {
+      "anyOf": [
+        {
+          "type": "integer"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Listed Avg Article Length"
+    },
+    "listed_domain": {
+      "description": "Domain key exactly as it appears in the list.",
+      "title": "Listed Domain",
+      "type": "string"
+    },
+    "listed_languages": {
+      "items": {
+        "type": "string"
+      },
+      "title": "Listed Languages",
+      "type": "array"
+    },
+    "listed_rank": {
+      "anyOf": [
+        {
+          "type": "integer"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Listed Rank"
+    },
+    "medium": {
+      "$ref": "#/$defs/FeedMedium"
+    },
+    "notes": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Notes"
+    },
+    "origin": {
+      "$ref": "#/$defs/FeedOrigin"
+    },
+    "schema_version": {
+      "default": "1.0",
+      "pattern": "^1\\.\\d+$",
+      "title": "Schema Version",
+      "type": "string"
+    },
+    "source_id": {
+      "description": "Registered domain of the listed publisher.",
+      "title": "Source Id",
+      "type": "string"
+    }
+  },
+  "required": [
+    "feed_id",
+    "feed_url",
+    "source_id",
+    "listed_domain",
+    "country",
+    "categories",
+    "medium",
+    "origin"
+  ],
+  "title": "FeedCandidate",
+  "type": "object",
+  "x-stability": "stable"
+}

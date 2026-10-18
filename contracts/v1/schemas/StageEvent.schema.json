@@ -1,0 +1,178 @@
+{
+  "$defs": {
+    "Stage": {
+      "enum": [
+        "discover",
+        "fetch",
+        "extract",
+        "store",
+        "segment",
+        "embed",
+        "ner",
+        "link",
+        "index"
+      ],
+      "title": "Stage",
+      "type": "string"
+    },
+    "StageStatus": {
+      "enum": [
+        "ok",
+        "retry",
+        "error",
+        "skipped"
+      ],
+      "title": "StageStatus",
+      "type": "string"
+    }
+  },
+  "$id": "newsrag/contracts/v1/StageEvent",
+  "additionalProperties": false,
+  "description": "``enqueued_at`` is when the item became ready for this stage (usually the previous\nstage's ``finished_at``); the gap to ``started_at`` is queueing time.",
+  "properties": {
+    "attempt": {
+      "default": 1,
+      "minimum": 1,
+      "title": "Attempt",
+      "type": "integer"
+    },
+    "detail": {
+      "anyOf": [
+        {
+          "maxLength": 500,
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Detail"
+    },
+    "doc_id": {
+      "anyOf": [
+        {
+          "pattern": "^[0-9a-f]{32}$",
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Doc Id"
+    },
+    "enqueued_at": {
+      "anyOf": [
+        {
+          "format": "date-time",
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Enqueued At"
+    },
+    "error_code": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Error Code"
+    },
+    "event_id": {
+      "description": "ULID; sortable by creation time.",
+      "title": "Event Id",
+      "type": "string"
+    },
+    "feed_id": {
+      "anyOf": [
+        {
+          "pattern": "^[0-9a-f]{32}$",
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Feed Id"
+    },
+    "finished_at": {
+      "format": "date-time",
+      "title": "Finished At",
+      "type": "string"
+    },
+    "pipeline_version": {
+      "title": "Pipeline Version",
+      "type": "string"
+    },
+    "revision": {
+      "anyOf": [
+        {
+          "minimum": 1,
+          "type": "integer"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Revision"
+    },
+    "schema_version": {
+      "default": "1.0",
+      "pattern": "^1\\.\\d+$",
+      "title": "Schema Version",
+      "type": "string"
+    },
+    "stage": {
+      "$ref": "#/$defs/Stage"
+    },
+    "started_at": {
+      "format": "date-time",
+      "title": "Started At",
+      "type": "string"
+    },
+    "status": {
+      "$ref": "#/$defs/StageStatus"
+    },
+    "url_id": {
+      "anyOf": [
+        {
+          "pattern": "^[0-9a-f]{32}$",
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Url Id"
+    },
+    "worker_id": {
+      "description": "host:process:task, e.g. 'laptop:fetch-1234:7'.",
+      "title": "Worker Id",
+      "type": "string"
+    }
+  },
+  "required": [
+    "event_id",
+    "stage",
+    "status",
+    "worker_id",
+    "started_at",
+    "finished_at",
+    "pipeline_version"
+  ],
+  "title": "StageEvent",
+  "type": "object",
+  "x-stability": "stable"
+}

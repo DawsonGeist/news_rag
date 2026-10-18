@@ -1,0 +1,60 @@
+{
+  "$id": "newsrag/contracts/v1/MentionLink",
+  "additionalProperties": false,
+  "description": "Scored edge from a Mention to a candidate Entity. Never a hard merge: one mention\nmay have several candidate links (\"Paris\" the city vs. the person).",
+  "properties": {
+    "confidence": {
+      "maximum": 1.0,
+      "minimum": 0.0,
+      "title": "Confidence",
+      "type": "number"
+    },
+    "created_at": {
+      "format": "date-time",
+      "title": "Created At",
+      "type": "string"
+    },
+    "entity_id": {
+      "title": "Entity Id",
+      "type": "string"
+    },
+    "features": {
+      "additionalProperties": {
+        "type": "number"
+      },
+      "title": "Features",
+      "type": "object"
+    },
+    "linker_version": {
+      "title": "Linker Version",
+      "type": "string"
+    },
+    "mention_id": {
+      "pattern": "^[0-9a-f]{32}$",
+      "title": "Mention Id",
+      "type": "string"
+    },
+    "method": {
+      "description": "e.g. 'exact_alias', 'context_model', 'coref', 'unresolved_self'.",
+      "title": "Method",
+      "type": "string"
+    },
+    "schema_version": {
+      "default": "1.0",
+      "pattern": "^1\\.\\d+$",
+      "title": "Schema Version",
+      "type": "string"
+    }
+  },
+  "required": [
+    "mention_id",
+    "entity_id",
+    "confidence",
+    "method",
+    "linker_version",
+    "created_at"
+  ],
+  "title": "MentionLink",
+  "type": "object",
+  "x-stability": "provisional"
+}
