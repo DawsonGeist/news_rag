@@ -106,14 +106,17 @@ Every fetched page gets a Document, including paywalled and non-article pages. F
 
 ## Durability protocol
 
-1. **Write a file:** write to `data/tmp/`, fsync the file, `os.replace` it into place, then fsync the directory (on POSIX).
-2. **Commit:** in a single SQLite transaction (WAL, `synchronous=FULL`), record the manifest rows (`blobs`, `table_files`, `doc_revisions`) and advance the `frontier` state.
-3. **The manifest decides what exists:** a file not listed in the manifest does not exist. On startup:
-   - delete everything in `tmp/`
-   - delete table files that have no `committed` manifest row
-   - delete blob files whose row is `expired` or missing
-   - reclaim frontier rows whose lease has expired
-4. **Retention:** mark the row expired in a transaction first, then unlink the file.
+1. **Stage a file:** write it into the process's own staging area under `tmp/` and fsync it. Each area is `tmp/<owner>-<pid>-<ulid>/`, guarded by an flock on `<name>.lock`, so one process's cleanup never deletes another live process's files.
+2. **Commit:** open a single SQLite write transaction (`BEGIN IMMEDIATE`; WAL, `synchronous=FULL`). Inside it:
+   - `os.replace` the file into place and fsync its directory, plus any new parent directories
+   - record the manifest rows (`blobs`, `table_files`, `doc_revisions`)
+   - advance the `frontier` state
+
+   Moving the file in under the write lock serializes it with retention's unlinks. A crash after the rename but before `COMMIT` leaves an orphan file, and orphans don't exist by rule 3.
+3. **The manifest decides what exists:** a file not listed in the manifest does not exist. Cleanup:
+   - **On startup:** delete the tmp areas whose lock is free (their process is dead). The storage writer also deletes table files with no `committed` row. Each component reclaims frontier rows whose lease expired in the states it owns: `fetching` belongs to the fetcher and `extracting` to the writer.
+   - **Daily, with retention:** delete blob files whose row is `expired` or missing. This walks all of `raw/`, so it doesn't run at startup.
+4. **Retention:** mark the row expired in a transaction first. Then unlink the file inside a write transaction that re-checks that the row is still not `present`.
 
 Never put the SQLite database or the Parquet tables on a network mount. Other machines reach the data through an API, or through copies of immutable segment files.
 

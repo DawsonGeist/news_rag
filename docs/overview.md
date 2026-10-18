@@ -19,7 +19,7 @@ The system must answer an opinion query (for example "Trump is a good guy for en
 - **Search mode:** a free-text opinion query plus optional entity and date filters returns ranked articles with the matching sentences highlighted.
 - **Explore mode:** browse the entity map (articles mentioning two entities, a publisher's coverage, publishers covering an entity, an entity in a date range).
 - **Pluggable pipelines:** RSS first, then YouTube (transcripts with timestamps), then CourtListener, all feeding one core.
-- **Local-first AI:** every model runs on the backend machine (i7, RTX 2070 with 6GB VRAM).
+- **Local-first AI:** every model runs on the backend machine (Core Ultra 7 265, RTX 5060 Ti with 16 GB VRAM, 32 GB RAM).
 - **Crash-safe and live:** the backend can lose power without corrupting data, and the frontend can query while ingestion runs.
 - **Distributable:** each component sits behind a versioned interface so it can move to another machine.
 

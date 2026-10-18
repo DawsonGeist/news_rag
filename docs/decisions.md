@@ -2,6 +2,28 @@
 
 Newest first. Each entry records what was decided, why, and what would reopen it.
 
+## 2026-10-17: Backend desktop and P1.1 storage
+
+These entries supersede the Runtime, VRAM, and Python rows of "Phase 1 foundations" below.
+
+| Decision | Choice | Why | Revisit if |
+| --- | --- | --- | --- |
+| Backend machine | Native Ubuntu 26.04 desktop: MSI Aegis R2, Core Ultra 7 265 (20 threads), 32 GB RAM, RTX 5060 Ti 16 GB, 2 TB NVMe. WSL and Windows are dropped. | This is the final backend machine. Setup is in [setup-linux.md](setup-linux.md). | — |
+| VRAM budget | 16 GB, less about 0.3 GB while the GPU drives the display | Hardware. Model options are in [phase2-models.md](phase2-models.md). | Phase 2 model selection |
+| Raw HTML retention | Unchanged: rolling 60 days | Author's choice, even with 1.7 TB free | Re-extraction needs older blobs |
+| Python | 3.12+ supported. The desktop runs 3.14. | Ubuntu 26.04 default | — |
+| Data directory | `~/newsrag-data`, outside the repo. Relative paths are resolved to absolute paths at load time. | A re-clone or `git clean` can't touch the archive, and two processes can't end up on different archives because of different working directories | — |
+| Extract workers | `min(8, cpu_count - 4)`, which is 8 on this machine | 50k docs/day is under 1 doc/s at 50 to 200 ms each. The remaining threads go to the fetcher, poller and Phase 2 tokenization. | The extract queue backs up in `report lag` |
+| Repository visibility | Private | Author's choice | Going public: re-check the User-Agent URL and that no golden fixtures are in history |
+| User-Agent contact | `newsrag/0.1 (+mailto:dawson.geist@gmail.com)` | The repo is private, so a repo URL would be a 404. Webmasters need a way to reach the operator. | Contact address changes |
+| Stance quality vs latency | Quality first: a 14B-class LLM cascade is acceptable at about 3 to 6 s per query | Author's choice | Measured 14B gain over 8B is negligible on the labeled set |
+| Vector retention | Vectors are kept for the full archive, with no rolling window | Author's choice: every stored article must be searchable by stance | Disk forecast fails. Shrink dimensions or quantization first; don't drop vectors. |
+| Staging files | One `TmpArea` per process (`tmp/<owner>-<pid>-<ulid>/` plus an flock), not a shared `tmp/` emptied at startup | With several processes, emptying `tmp/` at startup deleted other live processes' in-flight files | — |
+| Install inside the transaction | The `os.replace` into `raw/` or `tables/` happens inside the `BEGIN IMMEDIATE` transaction that writes the manifest row | It serializes blob installs with retention's unlinks through the SQLite write lock. Otherwise a re-fetched blob could end up `present` with its file deleted. | — |
+| Blob orphan sweep | Daily with retention, not at startup | It walks every blob (about 3M at 60 days). Orphans are harmless because the manifest says they don't exist. | — |
+| Single writer | Enforced with an flock on `state/locks/writer.lock` | Revision numbers are resolved outside the write transaction, which is only safe with one writer | — |
+| `ingested_at` | Set by the writer at flush time, overriding the extractor's value | Measures the writer's real share of ingest lag. It's not part of `content_hash`. | — |
+
 ## 2026-10-17: Phase 1 foundations
 
 | Decision | Choice | Why | Revisit if |
@@ -26,5 +48,5 @@ Newest first. Each entry records what was decided, why, and what would reopen it
 
 ## Open
 
-- Whether the GitHub repository will be public. This affects the user-agent URL and whether real-page golden fixtures may ever be committed. They're local-only for now.
+- Golden fixtures stay local-only even though the repo is private, since the repo may become public again and git history keeps everything.
 - Whether to add a headless-browser fetcher for JavaScript-only sites. Not in Phase 1.

@@ -54,7 +54,7 @@ CREATE TABLE IF NOT EXISTS feed_health (
     PRIMARY KEY (feed_id, checked_at)
 ) STRICT;
 
--- One row per poll attempt. Owner: poller. Pruned after poll_log_retention_days.
+-- One row per poll attempt. Owner: poller. Pruned after retention.poll_log_days.
 CREATE TABLE IF NOT EXISTS feed_polls (
     feed_id      TEXT NOT NULL REFERENCES feeds(feed_id),
     polled_at    TEXT NOT NULL,
@@ -177,7 +177,7 @@ CREATE INDEX IF NOT EXISTS doc_revisions_hash ON doc_revisions (content_hash);
 CREATE INDEX IF NOT EXISTS doc_revisions_file ON doc_revisions (file_id);
 
 -- Stage events (StageEvent v1). Owner: every stage, append-only.
--- Raw rows kept stage_event_retention_days, then rolled up.
+-- Raw rows kept retention.stage_event_days, then rolled up.
 CREATE TABLE IF NOT EXISTS stage_events (
     event_id         TEXT PRIMARY KEY,      -- ULID
     stage            TEXT NOT NULL,

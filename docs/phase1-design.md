@@ -49,13 +49,14 @@ stored ──feed reports update──▶ pending (low priority re-fetch)
 ## Data layout
 
 ```
-data/                         ($NEWSRAG_DATA_DIR; Linux filesystem under WSL, never /mnt/c)
+~/newsrag-data/               ($NEWSRAG_DATA_DIR; outside the repo, local disk only)
   state/crawl.sqlite3         crawl state + manifest (WAL)
   raw/ab/cd/<sha256>.html.zst raw bodies, zstd level 9, rolling retention (default 60 days)
   tables/documents/
     hot/part-<ulid>.parquet   small parts written every flush
     2026/10/part-<ulid>.parquet  compacted monthly parts
-  tmp/                        staging for atomic writes; emptied on startup
+  tmp/<owner>-<pid>-<ulid>/   one staging area per process, guarded by <name>.lock (flock)
+  state/locks/writer.lock     held by the single storage writer
   logs/
 ```
 
@@ -122,7 +123,7 @@ data/                         ($NEWSRAG_DATA_DIR; Linux filesystem under WSL, ne
 - **On success:**
   1. sha256 the body
   2. if the blob is new, write it compressed to `tmp/`, fsync, rename, then fsync the directory
-  3. in one transaction, insert the `blobs` row (with `expires_at = now + retention.raw_days`), set the frontier row to `fetched` (with `final_url`, `http_status`, `raw_blob_hash`), and write a `fetch` stage event
+  3. in one transaction: `BlobStore.commit` (rename into `raw/` and upsert the `blobs` row with `expires_at = now + retention.raw_days`), set the frontier row to `fetched` (with `final_url`, `http_status`, `raw_blob_hash`), and write a `fetch` stage event. The rename happens under the write lock so that it serializes with retention's unlinks.
 - No JavaScript rendering in Phase 1. The vetter flags sites that need it, because their full-text ratio comes out low.
 
 ### 4. Extractor (runs inside the writer's process pool)
@@ -152,12 +153,22 @@ Golden tests cover each heuristic.
      - new `content_hash`: `revision = max + 1`
   2. **Write** the Parquet part (zstd, explicit Arrow schema derived from the Document model) to `tmp/`, fsync, rename into `hot/`, fsync the directory.
   3. **Commit** in one transaction: insert the `table_files` row (with sha256 and row count), insert the `doc_revisions` rows, set the frontier rows to `stored` (with `doc_id` and `revision`), and write the `extract` and `store` stage events.
-- **Recovery on startup:** the durability protocol in the contracts README, plus resetting `extracting` rows whose lease expired back to `fetched`. Extraction is deterministic, so redoing it is safe.
+- **Recovery on startup** (`recover_writer`, under the writer lock):
+  - sweep the tmp areas of dead processes
+  - delete table files that have no `committed` manifest row
+  - reset `extracting` rows whose lease expired back to `fetched`. Extraction is deterministic, so redoing it is safe.
+
+  The blob orphan sweep is not part of startup. It walks millions of files, so it runs with the daily retention job.
 - **Compaction** (hourly; `newsrag run writer` does it between flushes):
   1. Merge closed `hot/` parts into monthly parts of about 128 MB.
   2. In one transaction, insert the new `table_files` row, mark the old rows `superseded`, and repoint `doc_revisions.file_id`.
   3. Delete the old files afterwards. If the process crashes before deleting them, startup cleanup removes them.
-- **Raw retention** (daily): select `blobs` where `state='present' AND expires_at < now`, mark them `expired` in a transaction, then unlink. Blobs referenced by golden fixtures have `expires_at = NULL`.
+- **Raw retention** (daily):
+  1. Select `blobs` where `state='present' AND expires_at < now` and mark them `expired` in a transaction.
+  2. Unlink each file inside a write transaction that re-checks the row first, so a concurrent re-fetch that revived the blob wins.
+  3. Sweep `raw/` for files whose row is missing or expired (`sweep_blobs`).
+
+  Blobs referenced by golden fixtures have `expires_at = NULL`.
 
 ### 13. Observability (Phase 1 part)
 
@@ -203,7 +214,7 @@ Gates 2 and 3 are outlined here and get detailed in their own design docs:
 ## Build order within Phase 1
 
 1. **P1.0** (done): skeleton, contracts, state DDL, candidate extraction.
-2. **P1.1:** blob store, table-file writer, recovery, plus their unit tests and kill-test harness. Everything else commits through this, so it comes first.
+2. **P1.1** (done): blob store, table-file writer, recovery, plus their unit tests and kill-test harness. Everything else commits through this, so it comes first.
 3. **P1.2:** fetcher with robots.txt and politeness, against the local fixture server.
 4. **P1.3:** extractor, plus synthetic and golden fixtures.
 5. **P1.4:** poller and the supervisor (`run all`).

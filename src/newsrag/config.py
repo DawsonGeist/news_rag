@@ -1,8 +1,11 @@
 """Runtime settings.
 
 Defaults live here. Overrides come from a TOML file (``$NEWSRAG_CONFIG``, else
-``config/newsrag.toml`` if present; see ``config/newsrag.example.toml``), then
-from ``$NEWSRAG_DATA_DIR`` for the data directory.
+``config/newsrag.toml`` in the repo if present; see ``config/newsrag.example.toml``),
+then from ``$NEWSRAG_DATA_DIR`` for the data directory.
+
+The data directory lives outside the repo (default ``~/newsrag-data``) so the
+checkout can be moved, re-cloned or wiped without touching the archive.
 """
 
 from __future__ import annotations
@@ -11,10 +14,15 @@ import os
 import tomllib
 from pathlib import Path
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, field_validator
 
-DEFAULT_CONFIG_PATH = Path("config/newsrag.toml")
-USER_AGENT = "newsrag/0.1 (+https://github.com/DawsonGeist/news_rag)"
+# src/newsrag/config.py -> repo root. Only meaningful for the editable dev install,
+# which is the only supported install; it keeps dev commands independent of the cwd.
+REPO_ROOT = Path(__file__).resolve().parents[2]
+DEFAULT_CONFIG_PATH = REPO_ROOT / "config" / "newsrag.toml"
+DEFAULT_DATA_DIR = Path("~/newsrag-data")
+# The repo is private, so the UA carries a contact address webmasters can actually reach.
+USER_AGENT = "newsrag/0.1 (+mailto:dawson.geist@gmail.com)"
 
 
 class _Section(BaseModel):
@@ -38,10 +46,17 @@ class PollSettings(_Section):
     pause_after_failures: int = 10
 
 
+def _default_extract_workers() -> int:
+    # 50k docs/day is under 1 doc/s and trafilatura takes ~50-200 ms per page, so a few
+    # workers clear even burst backlogs. Capping at 8 leaves the rest of the 20 threads
+    # for the fetcher, poller and the Phase 2 GPU worker's tokenization.
+    return max(1, min(8, (os.cpu_count() or 2) - 4))
+
+
 class WriterSettings(_Section):
     flush_rows: int = 500
     flush_seconds: float = 60.0
-    extract_workers: int = Field(default_factory=lambda: max(1, (os.cpu_count() or 2) - 2))
+    extract_workers: int = Field(default_factory=_default_extract_workers)
 
 
 class RetentionSettings(_Section):
@@ -51,12 +66,19 @@ class RetentionSettings(_Section):
 
 
 class Settings(_Section):
-    data_dir: Path = Path("data")
+    data_dir: Path = Field(default=DEFAULT_DATA_DIR, validate_default=True)
     user_agent: str = USER_AGENT
     fetch: FetchSettings = FetchSettings()
     poll: PollSettings = PollSettings()
     writer: WriterSettings = WriterSettings()
     retention: RetentionSettings = RetentionSettings()
+
+    @field_validator("data_dir")
+    @classmethod
+    def _absolute_data_dir(cls, v: Path) -> Path:
+        # Relative paths would resolve against whatever cwd a process starts in, so
+        # two components could silently use two different archives.
+        return v.expanduser().resolve()
 
     @property
     def state_db(self) -> Path:
@@ -73,6 +95,10 @@ class Settings(_Section):
     @property
     def tmp_dir(self) -> Path:
         return self.data_dir / "tmp"
+
+    @property
+    def locks_dir(self) -> Path:
+        return self.data_dir / "state" / "locks"
 
 
 def load_settings(path: Path | None = None) -> Settings:

@@ -8,17 +8,22 @@ from pathlib import Path
 
 import typer
 
-from newsrag.config import load_settings
+from newsrag.config import REPO_ROOT, load_settings
 
 app = typer.Typer(no_args_is_help=True, add_completion=False)
 contracts_app = typer.Typer(no_args_is_help=True, help="Contract schemas.")
 feeds_app = typer.Typer(no_args_is_help=True, help="Feed lists and vetting.")
 db_app = typer.Typer(no_args_is_help=True, help="Crawl-state database.")
+storage_app = typer.Typer(no_args_is_help=True, help="Archive storage.")
+test_app = typer.Typer(no_args_is_help=True, help="Durability tests.")
 app.add_typer(contracts_app, name="contracts")
 app.add_typer(feeds_app, name="feeds")
 app.add_typer(db_app, name="db")
+app.add_typer(storage_app, name="storage")
+app.add_typer(test_app, name="test")
 
-SCHEMAS_DIR = Path("contracts/v1/schemas")
+SCHEMAS_DIR = REPO_ROOT / "contracts" / "v1" / "schemas"
+FEEDS_DIR = REPO_ROOT / "feeds"
 
 
 def render_schemas() -> dict[str, str]:
@@ -60,9 +65,9 @@ def contracts_export(
 
 @feeds_app.command("candidates")
 def feeds_candidates(
-    source: Path = typer.Option(Path("feeds/source/feeds_world.yaml")),
-    supplement: Path = typer.Option(Path("feeds/supplement_us.yaml")),
-    out: Path = typer.Option(Path("feeds/candidates_us.yaml")),
+    source: Path = typer.Option(FEEDS_DIR / "source" / "feeds_world.yaml"),
+    supplement: Path = typer.Option(FEEDS_DIR / "supplement_us.yaml"),
+    out: Path = typer.Option(FEEDS_DIR / "candidates_us.yaml"),
     country: str = typer.Option("United States"),
 ) -> None:
     """Vetter stage A: extract US feed candidates from the curated lists."""
@@ -97,6 +102,42 @@ def db_init() -> None:
     init_schema(conn)
     conn.close()
     typer.echo(f"initialized {settings.state_db}")
+
+
+@storage_app.command("verify")
+def storage_verify(
+    deep: bool = typer.Option(False, help="Re-hash every committed file and read every part."),
+) -> None:
+    """Check the storage invariants against the data directory (read-only)."""
+    from newsrag.storage.recovery import verify_storage
+    from newsrag.storage.state import connect
+
+    settings = load_settings()
+    conn = connect(settings.state_db)
+    problems = verify_storage(conn, settings.data_dir, deep=deep)
+    conn.close()
+    for p in problems:
+        typer.echo(p)
+    typer.echo(f"{len(problems)} problems in {settings.data_dir}")
+    if problems:
+        raise typer.Exit(1)
+
+
+@test_app.command("kill")
+def test_kill(
+    iterations: int = typer.Option(20),
+    kills: int = typer.Option(2, help="SIGKILLs per iteration before the final run."),
+    seed: int | None = typer.Option(None),
+) -> None:
+    """SIGKILL the storage workload at random moments, restart it, check invariants (G1.4)."""
+    from newsrag.testing.killtest import run_kill_test
+
+    failures = run_kill_test(iterations, kills, seed)
+    for f in failures:
+        typer.echo(f)
+    typer.echo(f"{iterations - len(failures)}/{iterations} iterations passed")
+    if failures:
+        raise typer.Exit(1)
 
 
 if __name__ == "__main__":

@@ -11,7 +11,7 @@ A local-first search engine over news and long-form content. It finds articles b
 
 ## Status
 
-Phase 1 (vet, poll, fetch, extract, store). P1.0 is done: skeleton, contracts, state DDL and feed candidates. Next is P1.1: the blob store, table-file writer and recovery.
+Phase 1 (vet, poll, fetch, extract, store). P1.0 (skeleton, contracts, state DDL, feed candidates) and P1.1 (blob store, table-file writer, recovery, kill test) are done. Next is P1.2: the fetcher.
 
 ## Layout
 
@@ -26,13 +26,15 @@ src/newsrag/
   crawl/               components 2-3: poller, fetcher
   extract/             component 4: extractor (pure functions, process pool)
   storage/             component 8: state DB, blob store, table files, recovery
+  testing/             kill-test harness (shipped so `newsrag test kill` can run it)
   obs/                 component 13: stage events, lag reports
   cli.py               `newsrag` entry point; one subcommand per process
 feeds/                 feed lists (see feeds/README.md)
 tests/                 pytest; fixtures/synthetic committed, fixtures/golden local-only
 docs/                  overview, phase designs, setup, decision log
-data/                  runtime data (gitignored; $NEWSRAG_DATA_DIR)
 ```
+
+Runtime data lives outside the repo, in `~/newsrag-data` by default (`$NEWSRAG_DATA_DIR` overrides it).
 
 ## Commands
 
@@ -44,9 +46,11 @@ mypy src                           # strict
 newsrag contracts export           # regenerate JSON Schemas after changing a model
 newsrag feeds candidates           # regenerate feeds/candidates_us.yaml
 newsrag db init                    # create the crawl-state DB
+newsrag storage verify [--deep]    # check storage invariants
+newsrag test kill                  # SIGKILL kill test (Gate 1, G1.4)
 ```
 
-On the Windows machine, use `.venv\Scripts\python -m pytest` or similar. The long-running pipeline runs in WSL2 (see [docs/setup-wsl.md](docs/setup-wsl.md)).
+Everything runs on one native Ubuntu desktop (see [docs/setup-linux.md](docs/setup-linux.md)). The code is POSIX-only (`fcntl`, directory fsync).
 
 ## Rules every change follows
 
@@ -57,11 +61,11 @@ On the Windows machine, use `.venv\Scripts\python -m pytest` or similar. The lon
   - for a stable record, make only additive changes (bump the minor `SCHEMA_VERSION`). Anything else goes in `contracts/v2/`.
 - **Never change `ids.py` output for existing inputs.** That changes stored IDs and needs v2.
 - **UTC everywhere.** Use `timeutil.utcnow()`. Naive datetimes are bugs. `published_at` is never back-filled.
-- **Durability:** write to `data/tmp/`, fsync, `os.replace`, fsync the directory, then commit the manifest rows and the frontier state in one SQLite transaction. A file not in the manifest does not exist. Only the storage writer touches `data/tables/`, `table_files` and `doc_revisions`.
+- **Durability:** stage the file in your process's `TmpArea` and fsync it. Inside one `transaction(conn)`, `install` it (`os.replace`, then fsync the directory) and write the manifest rows and the frontier state. A file not in the manifest does not exist. Only the storage writer touches `tables/`, `table_files` and `doc_revisions`. Use `newsrag.storage.fsio` rather than hand-rolling any of this.
 - **Derived data is rebuildable.** Every derived row records `pipeline_version` plus its model, chunker or linker version.
 - **Stage events:** every stage writes a `StageEvent`, and lag must stay measurable.
 - **Politeness:** respect robots.txt, keep one request in flight per host, use an identifiable User-Agent, and never evade blocks or paywalls. Content must be open access.
-- **Local-first:** every runtime model runs locally (RTX 2070 Max-Q, 8 GB VRAM; 16 GB RAM). Claude is a development tool here, not a runtime dependency.
+- **Local-first:** every runtime model runs locally (RTX 5060 Ti 16 GB VRAM, 32 GB RAM, 20 CPU threads). Claude is a development tool here, not a runtime dependency.
 - **Golden fixtures** from real publishers stay in `tests/fixtures/golden/` (gitignored). Committed fixtures must be synthetic.
 - **Style:** type hints everywhere (mypy strict), pydantic for records, small pure functions where possible, and comments that explain *why*. Match the surrounding code.
 

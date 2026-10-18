@@ -1,9 +1,9 @@
 # Copy to config/newsrag.toml (gitignored) and edit, or point $NEWSRAG_CONFIG at a file.
 # Every key is optional; defaults are in src/newsrag/config.py.
-# $NEWSRAG_DATA_DIR overrides data_dir.
+# $NEWSRAG_DATA_DIR overrides data_dir. Keep it on a local disk, never a network mount.
 
-data_dir = "data"
-# user_agent = "newsrag/0.1 (+https://github.com/DawsonGeist/news_rag)"
+data_dir = "~/newsrag-data"
+# user_agent = "newsrag/0.1 (+mailto:dawson.geist@gmail.com)"
 
 [fetch]
 global_concurrency = 64
@@ -23,7 +23,7 @@ pause_after_failures = 10
 [writer]
 flush_rows = 500
 flush_seconds = 60.0
-# extract_workers = 6        # default: CPU count - 2
+# extract_workers = 8        # default: min(8, CPU count - 4)
 
 [retention]
 raw_days = 60
