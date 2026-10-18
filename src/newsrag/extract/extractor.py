@@ -36,10 +36,13 @@ from newsrag.extract.text import (
     word_count,
 )
 
-EXTRACTOR_VERSION = "extract-1"
+EXTRACTOR_VERSION = "extract-2"
 """Hand-bumped whenever output changes for an existing input."""
 
 NON_ARTICLE_MAX_WORDS = 80
+# A feed summary at least this long is the article itself (a full-content feed), not a
+# teaser. extract-2: before this, such feeds were misread as summary_only.
+TEASER_MAX_WORDS = 150
 PAYWALL_SHORT_WORDS = 250
 LANGUAGE_SAMPLE_CHARS = 2000
 # Below this, py3langid is guessing (a bare English headline can come out as 'nl' at
@@ -185,7 +188,9 @@ def declares_non_article(page: PageMeta, url: str) -> bool:
 
 
 def classify(text: str, summary: str, page: PageMeta, url: str) -> tuple[ContentKind, str]:
-    """Pick the content kind; for summary_only, the text becomes the feed summary."""
+    """Pick the content kind. When the feed summary is at least as long as the page
+    text, the summary becomes the text (summary_only, or full_text for full-content
+    feeds)."""
     words = word_count(text)
     if jsonld_is_free(page) is False:
         return ContentKind.SUSPECTED_PAYWALL, text
@@ -193,7 +198,12 @@ def classify(text: str, summary: str, page: PageMeta, url: str) -> tuple[Content
         return ContentKind.SUSPECTED_PAYWALL, text
     if (words < NON_ARTICLE_MAX_WORDS and not page.articles) or declares_non_article(page, url):
         return ContentKind.NON_ARTICLE, text
-    if summary and words <= word_count(summary):
+    summary_words = word_count(summary)
+    if summary and words <= summary_words:
+        # The page gave no more than the feed. A long summary is the full article
+        # carried in the feed; a short one is a teaser.
+        if summary_words >= TEASER_MAX_WORDS:
+            return ContentKind.FULL_TEXT, summary
         return ContentKind.SUMMARY_ONLY, summary
     if not text:
         # An article page with no extractable body: most likely rendered or walled.

@@ -11,7 +11,7 @@ A local-first search engine over news and long-form content. It finds articles b
 
 ## Status
 
-Phase 1 (vet, poll, fetch, extract, store). P1.0 (skeleton, contracts, state DDL, feed candidates) P1.1 (blob store, table-file writer, recovery, kill test), P1.2 (fetcher) P1.3 (extractor, writer loop, fixture tooling) and P1.4 (poller, `run all` supervisor, full-pipeline kill test) are done. Next is P1.5: vetter stages B and C.
+Phase 1 (vet, poll, fetch, extract, store). P1.0 (skeleton, contracts, state DDL, feed candidates) P1.1 (blob store, table-file writer, recovery, kill test), P1.2 (fetcher) P1.3 (extractor, writer loop, fixture tooling) and P1.4 (poller, `run all` supervisor, full-pipeline kill test) are done. P1.5 (vetter stages B and C) is built and piloted; the full vetting run is next.
 
 ## Layout
 
@@ -54,6 +54,10 @@ newsrag run poller                 # poll active feeds until SIGTERM
 newsrag run all                    # supervise poller + fetcher + writer
 newsrag feeds import               # load candidates_us.yaml into the DB (keeps statuses)
 newsrag feeds set-status active <feed-url>...
+newsrag feeds vet [--limit 50 --seed 1]   # vet feeds (resumable); --limit for a pilot
+newsrag feeds report [--list review]       # verdict counts; the human review queue
+# Manual feed decisions (set-status active|rejected|review) are final: never re-vet them.
+newsrag feeds export               # accepted feeds -> feeds/vetted_us.yaml
 newsrag fixtures capture <url>...  # save real pages as unverified golden cases (local only)
 newsrag fixtures report            # G1.5 metrics over verified golden cases
 ```

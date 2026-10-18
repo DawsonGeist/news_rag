@@ -2,6 +2,18 @@
 
 Newest first. Each entry records what was decided, why, and what would reopen it.
 
+## 2026-10-17: P1.5 vetter
+
+| Decision | Choice | Why | Revisit if |
+| --- | --- | --- | --- |
+| Full-content feeds | A feed summary of 150+ words that is at least as long as the page text is the article: `full_text`, with the summary as text (`extract-2`) | The pilot misread alternet.org (626-word items) as `summary_only` | — |
+| Date-found ratio | Counts dates from any source, the feed included (`vet-2`) | The question is whether Documents will carry a date. Page-only dates sent darpa.mil and others to review needlessly. | G1.5 shows feed dates are unreliable |
+| Bot-blocked sites | Rejected (`article_fetch_failed`, evidence `http_403` in the detail) | Policy: never evade blocks. 3 of 34 pilot publishers block our crawler. | — |
+| Mirror feeds | `duplicate_feed` when the item URL set is identical to a shorter feed URL of the same publisher. Subsets are kept. | popsugar.com lists 4 feeds with identical items | — |
+| Manual feed decisions | Final. `set-status active/rejected/review` appends a `feed_health` row with `vetter_version: "manual"`. The vetter never re-vets or overwrites such a feed, even with `--recheck` or a version bump, and a decision made during a run beats the run's verdict. `candidate` and `paused` lock nothing. | Author's choice: re-reviewing feeds by hand costs far more than re-vetting | — |
+| Sampled pages | Not stored in the archive | Vetting must not depend on, or bloat, the archive | — |
+| Polite access outside the frontier | `HostSlots` reserves hosts in the shared `hosts` table | Vetting can run alongside the pipeline without breaking one-request-per-host | — |
+
 ## 2026-10-17: P1.4 poller and supervisor
 
 | Decision | Choice | Why | Revisit if |

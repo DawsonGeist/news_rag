@@ -91,7 +91,7 @@ def test_document_identity_fields() -> None:
     assert doc.raw_blob_hash == ids.sha256_hex(body)
     assert doc.content_hash == ids.content_hash(doc.title, doc.extracted_text)
     assert doc.final_url == "https://millbrookledger.example/news/solar-farm-approved"
-    assert doc.extractor_version.startswith("extract-1+trafilatura-")
+    assert doc.extractor_version.startswith("extract-2+trafilatura-")
     assert doc.ingested_at == doc.fetched_at  # provisional until the writer flushes
 
 
@@ -130,6 +130,21 @@ def test_index_pages_are_non_articles() -> None:
     # Long text with og:type=article and no JSON-LD is still an article.
     doc = extract(root, context("x", {"final_url": "https://news.example/story"}))
     assert isinstance(doc, Document) and doc.content_kind is ContentKind.FULL_TEXT
+
+
+def test_full_content_feed_is_full_text_not_summary_only() -> None:
+    html = (
+        b'<html><head><script type="application/ld+json">{"@type": "NewsArticle"}</script>'
+        b"</head><body><article><p>A short teaser paragraph on the page.</p></article>"
+        b"</body></html>"
+    )
+    long_summary = "<p>" + " ".join(f"word{i}" for i in range(200)) + "</p>"
+    doc = extract(html, context("fullfeed", {"feed_summary": long_summary}))
+    assert isinstance(doc, Document)
+    assert doc.content_kind is ContentKind.FULL_TEXT and doc.word_count == 200
+    teaser = "<p>" + " ".join(f"word{i}" for i in range(40)) + "</p>"
+    doc = extract(html, context("teaser", {"feed_summary": teaser}))
+    assert isinstance(doc, Document) and doc.content_kind is ContentKind.SUMMARY_ONLY
 
 
 def test_unparseable_is_a_failure_not_an_exception() -> None:

@@ -35,6 +35,18 @@ flush_seconds = 60.0
 extract_timeout_s = 120.0
 extract_max_attempts = 3
 
+[vet]
+concurrency = 64
+feed_attempts = 3
+samples_per_feed = 3
+samples_per_source = 5
+stale_days = 30
+reject_paywall_ratio = 0.5
+reject_english_ratio = 0.5
+review_full_text_ratio = 0.67
+review_date_ratio = 0.5
+review_median_words = 150
+
 [retention]
 raw_days = 60
 stage_event_days = 30

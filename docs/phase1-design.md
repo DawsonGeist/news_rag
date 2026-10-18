@@ -73,7 +73,9 @@ stored ──feed reports update──▶ pending (low priority re-fetch)
 - 120 non-English domains dropped.
 - 91 feeds dropped for being in the "Other" category.
 
-**Stage B, the feed check (text feeds only):** fetch the feed through the fetcher's politeness layer and parse it with feedparser. It records:
+`newsrag feeds vet` works one publisher at a time, up to `vet.concurrency` (64) publishers at once. All requests go through `crawl.http` with `HostSlots`, so a vetting run stays polite even while the pipeline runs: one request per host, crawl delay, and robots.txt on every hop. Audio candidates get a `reject`/`audio_feed` verdict without any traffic, because G1.1 wants every candidate to hold a verdict. `--limit N --seed S` vets a random, reproducible pilot of whole publishers.
+
+**Stage B, the feed check (text feeds only):** fetch the feed (up to 3 tries for network errors, 429 and 5xx, with backoff) and parse it with the poller's parser. It records:
 
 - format and item count
 - the share of items with dates, and the newest item's date
@@ -81,23 +83,25 @@ stored ──feed reports update──▶ pending (low priority re-fetch)
 - the share of items with audio enclosures
 - whether robots.txt allows the feed
 
-**Stage C, the article sample:** fetch up to 3 recent items per feed (at most 5 per source) and run the real extractor on them. It records:
+**Stage C, the article sample:** sample the newest items, round-robin across the publisher's feeds: up to 3 per feed and at most 5 per publisher. Run the real extractor on them in a process pool. A feed whose own items weren't sampled is judged on the publisher's samples (same site, same CMS). Sampled pages aren't stored. Stage C records:
 
 - the share of articles yielding full text, and the share showing paywall markers
-- the share in English, and the share where a date was found
+- the share in English, and the share with a publication date from any source, the feed included (will this feed's Documents carry a date?)
 - the median word count
 
 **Verdict rules** (thresholds go in config and are tuned after the first run):
 
 | Verdict | Condition |
 | --- | --- |
-| reject | Unreachable after 3 tries, unparseable, empty, stale (newest item over 30 days old), robots disallows, `paywall_ratio ≥ 0.5`, `english_ratio < 0.5`, or audio |
-| review | `full_text_ratio < 0.67`, `published_at_found_ratio < 0.5`, or `median_word_count < 150` |
+| reject | Unreachable after 3 tries, unparseable, empty, stale (newest item over 30 days old), robots disallows the feed or every sampled article, every sample fetch failed (`article_fetch_failed`, usually HTTP 403 bot blocking), `paywall_ratio ≥ 0.5`, `english_ratio < 0.5`, audio, or `duplicate_feed` (exactly the same item URLs as a shorter feed URL of the same publisher) |
+| review | `full_text_ratio < 0.67` (labelled by the most common non-full kind: `summary_only`, `paywalled` or `low_word_count`), `published_at_found_ratio < 0.5`, or `median_word_count < 150` when not already explained by the full-text ratio |
 | accept | Everything else |
 
-- Each run appends to `feed_health` and sets `feeds.status` from the verdict.
+- Each publisher's reports commit together: a `feed_health` row per feed, and `feeds.status` set from the verdict (`active`, `review`, `rejected`). `status_reason` holds the issues, and the report's `detail` holds the evidence: HTTP statuses, sample kinds, sample errors.
+- `newsrag feeds report --list review` prints the human review queue. A human decision (`newsrag feeds set-status active|rejected|review <url> --reason ...`) is final: it is recorded as a `manual` health row, and the vetter never touches that feed again. Rejected feeds can be reviewed later with `--list rejected`.
 - `newsrag feeds export` writes the accepted list to `feeds/vetted_us.yaml` (committed) so another machine can reproduce the set.
-- Vetting about 9k feeds plus about 27k sample articles at polite rates takes several hours. Runs can resume, and finished feeds are skipped.
+- Runs resume: feeds already vetted by the current `VETTER_VERSION` are skipped. Bumping the version re-vets everything; `--recheck` does it by hand.
+- **Pilot (2026-10-17, 50 feeds, 34 publishers, about 1 min):** 27 accept, 6 review, 17 reject (3 audio, 3 duplicate mirrors, 3 bot-blocked, 3 stale, 2 paywalled, 2 robots, 1 HTTP 403). It found and fixed two rule bugs: full-content feeds misread as `summary_only` (extractor `extract-2`), and `no_dates` ignoring feed dates (`vet-2`).
 
 ### 2. Feed poller
 
@@ -164,7 +168,7 @@ The extractor takes the decompressed blob, the final URL and the frontier hints,
 8. **Content kind:**
    - `suspected_paywall` if JSON-LD `isAccessibleForFree` is false (on the article or one of its parts), or paywall markers appear in `class`/`id` attributes together with fewer than 250 words. Markers are never matched in scripts, and vendor names such as Piano are not markers, because NPR uses Piano for donation prompts.
    - `non_article` if there are fewer than 80 words and no article JSON-LD, or the page has no article JSON-LD and is the site root or declares an `og:type` other than `article` (homepages and section pages).
-   - `summary_only` if the extracted text is no longer than the feed summary. `extracted_text` is then the summary.
+   - If the extracted text is no longer than the feed summary, the summary becomes `extracted_text`. The kind is `summary_only` if the summary is under 150 words (a teaser), and `full_text` otherwise: a full-content feed carries the whole article (`extract-2`).
    - `suspected_paywall` if an article page yields no text at all.
    - otherwise `full_text`
 9. **Assemble:** `content_hash` and `word_count` are computed, and `extractor_version` is a hand-bumped string plus the trafilatura version.
@@ -250,7 +254,7 @@ Gates 2 and 3 are outlined here and get detailed in their own design docs:
 3. **P1.2** (done): fetcher with robots.txt and politeness, tested against mock transports and a local HTTP server.
 4. **P1.3** (done): extractor, the writer's extraction loop, synthetic fixtures, and the golden-fixture tooling. Verifying the golden cases is a human task, ongoing until Gate 1.
 5. **P1.4** (done): poller, supervisor (`run all`), feed import and status commands, and the full-pipeline kill test.
-6. **P1.5:** vetter stages B and C, reusing the fetcher and extractor. Run it on all 9,069 text candidates.
+6. **P1.5:** vetter stages B and C, reusing the fetcher and extractor (built; pilot done). Run it on all 9,069 text candidates.
 7. **P1.6:** lag and disk reports, compaction and retention jobs.
 8. **P1.7:** the 72 h soak, the power-pull test and the Gate 1 review.
 

@@ -13,9 +13,11 @@ Redirects are followed by hand so that robots.txt is checked on every hop.
 
 from __future__ import annotations
 
+import asyncio
 import logging
 import sqlite3
-from collections.abc import Callable, Mapping
+from collections.abc import AsyncIterator, Callable, Mapping
+from contextlib import asynccontextmanager
 from dataclasses import dataclass
 from datetime import datetime, timedelta
 from typing import Literal
@@ -252,3 +254,60 @@ class PoliteClient:
             return pol.ROBOTS_NETWORK_ERROR, None
         text = r.content[:ROBOTS_MAX_BYTES].decode("utf-8", errors="replace")
         return r.status_code, text if 200 <= r.status_code < 300 else None
+
+
+@dataclass
+class SlotResult:
+    """Set by the holder of a host slot; applied when the slot is released."""
+
+    network_error: bool = False
+    backoff_s: float | None = None
+
+
+class HostSlots:
+    """One-at-a-time, crawl-delayed access to hosts for requests outside the frontier
+    (the feed vetter, fixture capture). Waits for the host's turn in the shared
+    ``hosts`` table and reserves it there, so it also stays polite towards a fetcher
+    or poller running at the same time. An in-process lock per host keeps this
+    process's own tasks from polling the table for the same host."""
+
+    def __init__(self, conn: sqlite3.Connection, settings: Settings, poll_s: float = 0.25) -> None:
+        self.conn = conn
+        self.s = settings
+        self.poll_s = poll_s
+        self._locks: dict[str, asyncio.Lock] = {}
+
+    async def _acquire(self, host: str) -> None:
+        while True:
+            now = utcnow()
+            with transaction(self.conn):
+                row = self.conn.execute(
+                    "SELECT next_allowed_at, backoff_until FROM hosts WHERE host = ?", (host,)
+                ).fetchone()
+                times = [from_db(t) for t in (row or ()) if t is not None]
+                ready_at = max(times, default=now)
+                if ready_at <= now:
+                    reserve_host(self.conn, self.s, host, now)
+                    return
+            await asyncio.sleep(
+                min(self.poll_s * 20, max(self.poll_s, (ready_at - now).total_seconds()))
+            )
+
+    @asynccontextmanager
+    async def slot(self, host: str) -> AsyncIterator[SlotResult]:
+        lock = self._locks.setdefault(host, asyncio.Lock())
+        async with lock:
+            await self._acquire(host)
+            result = SlotResult()
+            try:
+                yield result
+            finally:
+                with transaction(self.conn):
+                    release_host(
+                        self.conn,
+                        self.s,
+                        host,
+                        utcnow(),
+                        network_error=result.network_error,
+                        backoff_s=result.backoff_s,
+                    )

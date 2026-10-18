@@ -72,6 +72,21 @@ class WriterSettings(_Section):
     extract_max_attempts: int = 3  # for transient failures (timeouts, crashed workers)
 
 
+class VetSettings(_Section):
+    """Feed vetting (phase1-design.md, component 1). Thresholds are tuned after a run."""
+
+    concurrency: int = 64  # publishers vetted at once (still one request per host)
+    feed_attempts: int = 3  # tries before a feed counts as unreachable
+    samples_per_feed: int = 3
+    samples_per_source: int = 5
+    stale_days: int = 30
+    reject_paywall_ratio: float = 0.5  # reject at or above
+    reject_english_ratio: float = 0.5  # reject below
+    review_full_text_ratio: float = 0.67  # review below
+    review_date_ratio: float = 0.5  # review below
+    review_median_words: int = 150  # review below
+
+
 class RetentionSettings(_Section):
     raw_days: int = 60
     stage_event_days: int = 30
@@ -88,6 +103,7 @@ class Settings(_Section):
     poll: PollSettings = PollSettings()
     writer: WriterSettings = WriterSettings()
     retention: RetentionSettings = RetentionSettings()
+    vet: VetSettings = VetSettings()
 
     @field_validator("data_dir")
     @classmethod

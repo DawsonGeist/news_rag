@@ -99,16 +99,24 @@ def feeds_candidates(
 @feeds_app.command("import")
 def feeds_import(
     path: Path = typer.Option(FEEDS_DIR / "candidates_us.yaml"),
+    activate: bool = typer.Option(
+        False, help="Set every imported feed active (for a vetted_us.yaml export)."
+    ),
 ) -> None:
     """Load feed candidates into the crawl-state DB (idempotent; keeps statuses)."""
-    from newsrag.feeds.registry import import_candidates, load_candidates
+    from newsrag.feeds.registry import import_candidates, load_candidates, set_status
     from newsrag.storage.state import connect, init_schema
     from newsrag.timeutil import utcnow
 
     settings = load_settings()
     conn = connect(settings.state_db)
     init_schema(conn)
-    stats = import_candidates(conn, load_candidates(path), utcnow())
+    cands = load_candidates(path)
+    stats = import_candidates(conn, cands, utcnow())
+    if activate:
+        set_status(
+            conn, [c.feed_id for c in cands], "active", f"imported from {path.name}", utcnow()
+        )
     conn.close()
     typer.echo(
         f"sources new {stats.sources_new}; feeds new {stats.feeds_new}, "
@@ -116,14 +124,102 @@ def feeds_import(
     )
 
 
+@feeds_app.command("vet")
+def feeds_vet(
+    limit: int | None = typer.Option(
+        None, help="Pilot: vet whole publishers at random until this many feeds."
+    ),
+    seed: int = typer.Option(0, help="Random seed for --limit."),
+    source: list[str] = typer.Option([], help="Only these publishers (source_id)."),
+    recheck: bool = typer.Option(False, help="Re-vet feeds already vetted by this version."),
+) -> None:
+    """Vetter stages B and C: check feeds, sample articles, record verdicts (resumable)."""
+    import asyncio
+    from concurrent.futures import ProcessPoolExecutor
+
+    from newsrag.crawl.http import make_client
+    from newsrag.feeds.vetter import Vetter, report_counts, select_feeds
+    from newsrag.storage.state import connect, init_schema
+
+    _setup_logging()
+    settings = load_settings()
+    conn = connect(settings.state_db)
+    init_schema(conn)
+    by_source = select_feeds(conn, recheck=recheck, limit=limit, seed=seed, sources=source)
+    n = sum(len(f) for f in by_source.values())
+    typer.echo(f"vetting {n} feeds from {len(by_source)} publishers")
+
+    async def main() -> dict[str, int]:
+        with ProcessPoolExecutor(max_workers=settings.writer.extract_workers) as pool:
+            async with make_client(settings) as client:
+                return await Vetter(settings, conn, client, pool).run(by_source)
+
+    counts = asyncio.run(main())
+    typer.echo(f"this run: {counts}")
+    typer.echo(f"all runs: {report_counts(conn)}")
+    conn.close()
+
+
+@feeds_app.command("report")
+def feeds_report(
+    list_status: str | None = typer.Option(
+        None, "--list", help="Also list feeds with this status (e.g. review), with reasons."
+    ),
+) -> None:
+    """Latest verdict counts and issues over all vetted feeds (G1.1)."""
+    import json
+
+    from newsrag.feeds.vetter import report_counts
+    from newsrag.storage.state import connect
+
+    settings = load_settings()
+    conn = connect(settings.state_db)
+    typer.echo(json.dumps(report_counts(conn), indent=2))
+    if list_status:
+        rows = conn.execute(
+            "SELECT f.feed_url, f.status_reason, json_extract(h.report_json, '$.detail') "
+            "FROM feeds f JOIN feed_health h ON h.feed_id = f.feed_id "
+            "WHERE f.status = ? AND h.checked_at = "
+            "(SELECT max(checked_at) FROM feed_health WHERE feed_id = f.feed_id) "
+            "ORDER BY f.source_id, f.feed_url",
+            (list_status,),
+        ).fetchall()
+        for url, reason, detail in rows:
+            typer.echo(f"{url}\t{reason or ''}\t{detail or ''}")
+    conn.close()
+
+
+@feeds_app.command("export")
+def feeds_export(
+    candidates: Path = typer.Option(FEEDS_DIR / "candidates_us.yaml"),
+    out: Path = typer.Option(FEEDS_DIR / "vetted_us.yaml"),
+) -> None:
+    """Write the accepted (active) feeds as candidate rows, for `feeds import --activate`."""
+    from newsrag.feeds.candidates import write_candidates
+    from newsrag.feeds.registry import load_candidates
+    from newsrag.storage.state import connect
+
+    settings = load_settings()
+    conn = connect(settings.state_db)
+    active = {r[0] for r in conn.execute("SELECT feed_id FROM feeds WHERE status = 'active'")}
+    conn.close()
+    rows = [c for c in load_candidates(candidates) if c.feed_id in active]
+    write_candidates(rows, out, generated_by="newsrag feeds export")
+    typer.echo(f"wrote {len(rows)} accepted feeds to {out}")
+
+
 @feeds_app.command("set-status")
 def feeds_set_status(
     status: str = typer.Argument(..., help="candidate | active | review | rejected | paused"),
     feeds: list[str] = typer.Argument(..., help="Feed URLs or feed_ids."),
-    reason: str = typer.Option("manual", help="Recorded in feeds.status_reason."),
+    reason: str = typer.Option("no reason given", help="Why; kept with the decision."),
 ) -> None:
-    """Set feed status by hand. The vetter (P1.5) sets it automatically."""
-    from newsrag.feeds.registry import resolve_feed, set_status
+    """Set feed status by hand.
+
+    active, rejected and review are decisions: they are final, and the vetter never
+    re-vets or overwrites the feed. candidate and paused are operational and lock nothing.
+    """
+    from newsrag.feeds.registry import MANUAL_VERDICTS, decide_manually, resolve_feed, set_status
     from newsrag.storage.state import connect
     from newsrag.timeutil import utcnow
 
@@ -136,9 +232,13 @@ def feeds_set_status(
             typer.echo(f"unknown feed: {ref} (run `newsrag feeds import` first?)", err=True)
             raise typer.Exit(1)
         ids_.append(fid)
-    n = set_status(conn, ids_, status, reason, utcnow())
+    if status in MANUAL_VERDICTS:
+        n = decide_manually(conn, ids_, status, reason, utcnow())
+        typer.echo(f"{n} feeds set to {status} (manual decision; the vetter will keep it)")
+    else:
+        n = set_status(conn, ids_, status, reason, utcnow())
+        typer.echo(f"{n} feeds set to {status}")
     conn.close()
-    typer.echo(f"{n} feeds set to {status}")
 
 
 @db_app.command("init")
