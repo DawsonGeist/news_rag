@@ -2,6 +2,19 @@
 
 Newest first. Each entry records what was decided, why, and what would reopen it.
 
+## 2026-10-19: Planned network architecture (VPS edge), not built yet
+
+The author plans to rent a VPS as the system's public edge. Build towards this; nothing below exists yet.
+
+| Decision | Choice | Why | Revisit if |
+| --- | --- | --- | --- |
+| Public edge | A VPS with a public IP runs the reverse proxy (e.g. Caddy: TLS, auth). The home server stays behind NAT with **no router ports opened**. | Keeps the home network closed while making the frontend and API reachable | — |
+| Tunnel | WireGuard, dialled **out** from the home server to the VPS (UDP 51820, `PersistentKeepalive = 25`). Docker is optional, for packaging services at either end. Tailscale/Headscale is an acceptable managed alternative. | Outbound-only tunnel needs no port forwarding | — |
+| Inbound traffic | VPS proxy → tunnel → home **query API** only (Phase 3). Never expose SQLite, Parquet or the data directory. Auth, and serving snippets plus links rather than full text, before anyone else uses it (see Users and Content policy above). | Matches overview.md: the frontend is on another machine and reaches storage only through the query API | — |
+| Crawler egress | An application-level HTTP proxy on the VPS, bound to the WireGuard address only. newsrag gets a `fetch.proxy` setting used by `make_client`. Only crawler traffic uses it; personal browsing stays on the home line. If the tunnel is down, crawling must **fail loudly, never fall back to the home IP**. | Isolates the home IP's reputation from bot-protection blocks (see "Handling hosts that block the crawler"). A fixed VPS IP stays honest and identifiable, unlike a VPN. | — |
+| Push discovery | Once the edge exists, consider WebSub for feeds that advertise a hub (callbacks arrive at the VPS and are forwarded through the tunnel) | Near-instant discovery without heavier polling | — |
+| Bandwidth | The crawler downloads a few GB a day; check the VPS plan's metering (ingress is usually free) | Avoid surprise costs | — |
+
 ## 2026-10-18: Handling hosts that block the crawler
 
 | Decision | Choice | Why | Revisit if |
