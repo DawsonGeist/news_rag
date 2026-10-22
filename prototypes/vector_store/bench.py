@@ -85,7 +85,7 @@ class LanceEngine:
         self.tbl.optimize()  # folds appended rows into the indexes
 
     def search(self, q, k, docs, date):  # type: ignore[no-untyped-def]
-        s = self.tbl.search(q).limit(k).select(["row"])
+        s = self.tbl.search(q).limit(k).select(["row", "_distance"])
         clauses = []
         if docs is not None:
             clauses.append("doc_id IN (" + ",".join(f"'{d}'" for d in docs) + ")")
@@ -99,7 +99,161 @@ class LanceEngine:
         return sum(p.stat().st_size for p in self.root.rglob("*") if p.is_file())
 
 
-ENGINES = {"lancedb": LanceEngine}
+def _docker_du(container: str, path: str) -> int:
+    import subprocess
+
+    out = subprocess.run(
+        ["docker", "exec", container, "du", "-sb", path], capture_output=True, text=True, check=True
+    ).stdout
+    return int(out.split()[0])
+
+
+class QdrantEngine:
+    name = "qdrant"
+    COLLECTION = "proto_passages"
+
+    def __init__(self, root: Path) -> None:
+        from qdrant_client import QdrantClient
+
+        self.c = QdrantClient(url="http://127.0.0.1:6333", prefer_grpc=True, timeout=600)
+        if self.c.collection_exists(self.COLLECTION):
+            self.c.delete_collection(self.COLLECTION)
+
+    def _points(self, rows: pa.Table):  # type: ignore[no-untyped-def]
+        vecs = np.asarray(rows["vector"].combine_chunks().flatten().to_numpy()).reshape(rows.num_rows, -1)
+        payload = [
+            {"doc_id": d, "published": int(t)}
+            for d, t in zip(rows["doc_id"].to_pylist(), rows["published"].to_pylist(), strict=True)
+        ]
+        return rows["row"].to_pylist(), vecs, payload
+
+    def load(self, rows: pa.Table) -> None:
+        from qdrant_client import models as m
+
+        dim = rows.schema.field("vector").type.list_size
+        self.c.create_collection(
+            self.COLLECTION,
+            vectors_config=m.VectorParams(size=dim, distance=m.Distance.COSINE, on_disk=True),
+            quantization_config=m.ScalarQuantization(
+                scalar=m.ScalarQuantizationConfig(type=m.ScalarType.INT8, always_ram=True)
+            ),
+        )
+        self.c.create_payload_index(self.COLLECTION, "doc_id", m.PayloadSchemaType.KEYWORD)
+        self.c.create_payload_index(self.COLLECTION, "published", m.PayloadSchemaType.INTEGER)
+        for start in range(0, rows.num_rows, 20_000):
+            ids, vecs, payload = self._points(rows.slice(start, 20_000))
+            self.c.upload_collection(self.COLLECTION, vecs, payload, ids=ids, batch_size=1024, parallel=4)
+
+    def _wait_green(self) -> None:
+        from qdrant_client import models as m
+
+        while self.c.get_collection(self.COLLECTION).status != m.CollectionStatus.GREEN:
+            time.sleep(1)
+
+    def build_index(self) -> None:
+        self._wait_green()  # Qdrant indexes in the background as segments fill
+
+    def append(self, rows: pa.Table) -> None:
+        from qdrant_client import models as m
+
+        ids, vecs, payload = self._points(rows)
+        self.c.upsert(self.COLLECTION, m.Batch(ids=ids, vectors=vecs.tolist(), payloads=payload), wait=True)
+
+    def maintain(self) -> None:
+        self._wait_green()
+
+    def search(self, q, k, docs, date):  # type: ignore[no-untyped-def]
+        from qdrant_client import models as m
+
+        must = []
+        if docs is not None:
+            must.append(m.FieldCondition(key="doc_id", match=m.MatchAny(any=list(docs))))
+        if date is not None:
+            must.append(m.FieldCondition(key="published", range=m.Range(gte=date[0], lt=date[1])))
+        r = self.c.query_points(
+            self.COLLECTION, query=q.tolist(), limit=k, query_filter=m.Filter(must=must) if must else None
+        )
+        return [int(p.id) for p in r.points]
+
+    def disk_bytes(self) -> int:
+        return _docker_du("newsrag-qdrant-1", f"/qdrant/storage/collections/{self.COLLECTION}")
+
+
+class Neo4jEngine:
+    name = "neo4j"
+
+    def __init__(self, root: Path) -> None:
+        from neo4j import GraphDatabase
+
+        repo = Path(__file__).resolve().parents[2]
+        env = dict(
+            line.split("=", 1) for line in (repo / "deploy" / ".env").read_text().split() if "=" in line
+        )
+        self.d = GraphDatabase.driver("bolt://127.0.0.1:7687", auth=("neo4j", env["NEO4J_PASSWORD"]))
+        self._q("DROP INDEX proto_passage_vec IF EXISTS")
+        self._q("MATCH (p:ProtoPassage) CALL (p) { DETACH DELETE p } IN TRANSACTIONS OF 20000 ROWS")
+
+    def _q(self, cypher: str, **params: Any) -> list[Any]:
+        if "IN TRANSACTIONS" in cypher:  # needs an implicit (auto-commit) transaction
+            with self.d.session() as s:
+                return list(s.run(cypher, params))
+        return self.d.execute_query(cypher, params).records
+
+    def _create(self, rows: pa.Table) -> None:
+        vecs = np.asarray(rows["vector"].combine_chunks().flatten().to_numpy()).reshape(rows.num_rows, -1)
+        batch = [
+            {"row": r, "doc_id": d, "published": int(t), "vector": v.tolist()}
+            for r, d, t, v in zip(
+                rows["row"].to_pylist(), rows["doc_id"].to_pylist(), rows["published"].to_pylist(), vecs, strict=True
+            )
+        ]
+        self._q(
+            "UNWIND $rows AS r CREATE (:ProtoPassage {row: r.row, doc_id: r.doc_id, "
+            "published: r.published, vector: r.vector})",
+            rows=batch,
+        )
+
+    def load(self, rows: pa.Table) -> None:
+        for start in range(0, rows.num_rows, 5_000):
+            self._create(rows.slice(start, 5_000))
+
+    def build_index(self) -> None:
+        dim = 1024
+        self._q(
+            "CREATE VECTOR INDEX proto_passage_vec IF NOT EXISTS FOR (p:ProtoPassage) ON p.vector "
+            "WITH [p.doc_id, p.published] "
+            f"OPTIONS {{indexConfig: {{`vector.dimensions`: {dim}, `vector.similarity_function`: 'cosine'}}}}"
+        )
+        self._q("CALL db.awaitIndexes(36000)")
+
+    def append(self, rows: pa.Table) -> None:
+        self._create(rows)
+
+    def maintain(self) -> None:
+        self._q("CALL db.awaitIndexes(3600)")
+
+    def search(self, q, k, docs, date):  # type: ignore[no-untyped-def]
+        where = []
+        params: dict[str, Any] = {"v": q.tolist(), "k": k}
+        if docs is not None:
+            where.append("p.doc_id IN $docs")
+            params["docs"] = list(docs)
+        if date is not None:
+            where.append("p.published >= $lo AND p.published < $hi")
+            params["lo"], params["hi"] = date
+        clause = f" WHERE {' AND '.join(where)}" if where else ""
+        rec = self._q(
+            "MATCH (p:ProtoPassage) SEARCH p IN (VECTOR INDEX proto_passage_vec FOR $v"
+            f"{clause} LIMIT $k) SCORE AS s RETURN p.row AS row",
+            **params,
+        )
+        return [r["row"] for r in rec]
+
+    def disk_bytes(self) -> int:
+        return _docker_du("newsrag-neo4j-1", "/data/databases/neo4j")
+
+
+ENGINES = {"lancedb": LanceEngine, "qdrant": QdrantEngine, "neo4j": Neo4jEngine}
 
 
 # --- workload ------------------------------------------------------------------------------
@@ -154,19 +308,24 @@ def pct(values: list[float], p: float) -> float:
     return statistics.quantiles(values, n=100)[int(p) - 1] if len(values) > 1 else values[0]
 
 
-def run(engine_name: str, model: str) -> dict[str, Any]:
+def run(engine_name: str, model: str, root: Path | None = None, random_queries: bool = False) -> dict[str, Any]:
     s = load_settings()
-    out = s.data_dir / "prototype" / "vector_store"
+    out = root or s.data_dir / "prototype" / "vector_store"
     table, vectors = load_corpus(out, model)
     n = table.num_rows
+    append_rows = min(APPEND_ROWS, n // 4)
     print(f"corpus: {n} passages, dim {vectors.shape[1]}", flush=True)
-    queries = query_vectors(model, N_QUERIES)
+    if random_queries:  # smoke tests: no model load
+        queries = np.random.default_rng(3).standard_normal((N_QUERIES, vectors.shape[1])).astype(np.float32)
+        queries /= np.linalg.norm(queries, axis=1, keepdims=True)
+    else:
+        queries = query_vectors(model, N_QUERIES)
     vg = torch.from_numpy(np.asarray(vectors)).to("cuda", torch.float16)
 
     engine: Engine = ENGINES[engine_name](out / f"store-{engine_name}")
     res: dict[str, Any] = {"engine": engine_name, "model": model, "passages": n}
 
-    base = table.slice(0, n - APPEND_ROWS)
+    base = table.slice(0, n - append_rows)
     t0 = time.perf_counter()
     engine.load(base)
     res["bulk_load_s"] = round(time.perf_counter() - t0, 1)
@@ -176,7 +335,7 @@ def run(engine_name: str, model: str) -> dict[str, Any]:
     print(f"load {res['bulk_load_s']} s, index {res['index_build_s']} s", flush=True)
 
     append_s = []
-    for start in range(n - APPEND_ROWS, n, APPEND_BATCH):
+    for start in range(n - append_rows, n, APPEND_BATCH):
         t0 = time.perf_counter()
         engine.append(table.slice(start, APPEND_BATCH))
         append_s.append(time.perf_counter() - t0)
@@ -223,9 +382,11 @@ def run(engine_name: str, model: str) -> dict[str, Any]:
     measure("unfiltered", None, False)
     measure("date_7d", None, True)
     for size in GATE_SIZES:
+        if size > len(unique_docs):
+            continue
         gate = list(rng.choice(unique_docs, size=size, replace=False))
         measure(f"gate_{size}_docs", gate, False)
-    gate = list(rng.choice(unique_docs, size=1_000, replace=False))
+    gate = list(rng.choice(unique_docs, size=min(1_000, len(unique_docs)), replace=False))
     measure("gate_1000_docs_and_date", gate, True)
     res["disk_gb"] = round(engine.disk_bytes() / 1e9, 2)
     print(f"disk {res['disk_gb']} GB, maintain {res['maintain_s']} s", flush=True)
@@ -237,5 +398,7 @@ if __name__ == "__main__":
     ap = argparse.ArgumentParser()
     ap.add_argument("--engine", choices=sorted(ENGINES), required=True)
     ap.add_argument("--model", default="BAAI/bge-m3")
+    ap.add_argument("--root", type=Path, default=None, help="Corpus directory (default: the data dir's).")
+    ap.add_argument("--random-queries", action="store_true", help="Smoke test: no model load.")
     args = ap.parse_args()
-    run(args.engine, args.model)
+    run(args.engine, args.model, args.root, args.random_queries)
