@@ -11,7 +11,7 @@ Review date: 2026-10-22. Soak window: 2026-10-18T04:10:50Z to 2026-10-21T04:10:5
 | G1.3 | Ingest lag p95 < 10 min, p99 < 30 min over the 72 h | **PASS (steady state)** | Items published during the soak (n = 79,256): **p50 53 s, p95 7.3 min, p99 22.6 min**. Everything after the first-poll backlog (n = 81,160): p95 8.3 min, p99 23.8 min. Including the first-poll backlog of about 105k historical items: p95 2.0 h, p99 7.0 h; the backlog drained through single-host queues at the crawl delay. By day: Oct 18 p95 12.5 min (backlog tail), Oct 19 6.5 min, Oct 20 7.8 min, Oct 21 5.7 min. |
 | G1.4 | Kill test 20/20, plus one real power pull | **PASS** | `newsrag test kill`: 20/20 several times, including runs with compaction under SIGKILL and the leaked-process check. Power pull (2026-10-18 about 13:13Z): auto-restart without login, 10 in-flight extractions reclaimed, `quick_check` ok, `verify --deep` 0 problems, nothing lost or duplicated. |
 | G1.5 | Golden set: date ±24 h ≥ 90%, kind ≥ 95%, first+last paragraph ≥ 90% | **NOT MET (sample too small)** | On the 4 verified cases (2 publishers): 100% / 100% / 100%. The design calls for about 40 pages across 20 publishers. |
-| G1.6 | Re-extraction reproduces `content_hash` for an unchanged extractor version | **PASS** | 5,000-document sample: 5,000/5,000 matched. Full archive: see the addendum. |
+| G1.6 | Re-extraction reproduces `content_hash` for an unchanged extractor version | **PASS** | Full archive (2026-10-22): **255,543 / 255,543 matched**, 0 mismatches, 0 skipped. |
 | G1.7 | Disk forecast fits 12 months on the current SSD | **PASS** | Steady state (Oct 19–21): 34,936 docs/day; raw blobs 1.75 GB/day (49 KB/page). 12-month forecast: blobs plateau at 105 GB (60-day retention) + Parquet 31 GB + SQLite 60 GB = **195 GB, 9.7% of 2 TB** (277 GB at the 50k/day design ceiling). Free now: 1,824 GB. Phase 2 vectors are not included (see phase2-models.md). |
 
 Archive at review time: about 200k stored pages from about 2,400 publishers. Storage invariants are verified (`verify --deep`: 0 problems).
@@ -28,5 +28,7 @@ Archive at review time: about 200k stored pages from about 2,400 publishers. Sto
 ## Remaining to close Gate 1
 
 1. **G1.5:** capture about 36 more golden pages so there are about 40 across at least 20 publishers, and the author verifies them. Proposed: I pick a spread of publishers from the archive (CMS families: WordPress, Arc, Brightspot, custom) and capture them with `newsrag fixtures capture`, and the author verifies each `case.yaml`.
+
+G1.5 status: 36 more cases were created from archived pages (`fixtures from-archive`) and await verification.
 
 Phase 2 design work can begin now; G1.5 is a quality check of the extractor that can finish in parallel.
