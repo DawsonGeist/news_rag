@@ -6,14 +6,15 @@ A local-first search engine over news and long-form content. It finds articles b
 
 - [docs/overview.md](docs/overview.md): the vision and the 13 components. Some details there are superseded, and the contracts win.
 - [contracts/v1/README.md](contracts/v1/README.md): **normative** rules for IDs, revisions, text and locators, time, and durability.
-- [docs/phase1-design.md](docs/phase1-design.md): the current phase, its build order and Gate 1.
+- [docs/phase1-design.md](docs/phase1-design.md): Phase 1, its build order and Gate 1.
+- [docs/phase2-design.md](docs/phase2-design.md): Phase 2 draft (segmenter, embedder, entity linking, Wikidata, stores, Gate 2).
 - [docs/decisions.md](docs/decisions.md): what has been decided and why. Add an entry whenever you make a decision.
 - [docs/vision.md](docs/vision.md): what the author wants, in priority order (opinion search, visual entity graph, timelines, notifications). Trace design choices back to it.
 - [docs/ideas.md](docs/ideas.md): parked ideas (EDGAR pipeline, poll scheduling, …). Stick to the design plan; an idea moves into a phase design only when the author picks it up.
 
 ## Status
 
-Phase 1 (vet, poll, fetch, extract, store). P1.0 (skeleton, contracts, state DDL, feed candidates) P1.1 (blob store, table-file writer, recovery, kill test), P1.2 (fetcher) P1.3 (extractor, writer loop, fixture tooling) and P1.4 (poller, `run all` supervisor, full-pipeline kill test) are done. P1.5 (vetter stages B and C) is built and piloted; the full vetting run is next.
+Phase 1 (vet, poll, fetch, extract, store) is built and running as a systemd user service. Gate 1 passes 6 of 7 criteria ([docs/gate1-review.md](docs/gate1-review.md)); G1.5 is waiting for the author to verify the golden pages. Phase 2 (segment, embed, extract entities, link, evaluate) is a **draft design for review**, [docs/phase2-design.md](docs/phase2-design.md). Don't build Phase 2 until the author approves it.
 
 ## Layout
 
