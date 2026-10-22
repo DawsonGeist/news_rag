@@ -23,6 +23,7 @@ dependencies = [
     "pyarrow>=17",
     "duckdb>=1.1",
     "python-ulid>=2.7",
+    "pysbd>=0.3.4",  # sentence splitting (segmenter)
 ]
 
 [project.optional-dependencies]
@@ -33,6 +34,15 @@ dev = [
     "ruff>=0.6",
     "mypy>=1.11",
     "types-PyYAML",
+]
+
+# Phase 2 GPU/ML stack. PyTorch itself is installed from its CUDA index first (pip
+# cannot take the index from here): see docs/setup-linux.md, "GPU stack".
+ml = [
+    "sentence-transformers>=3.0",
+    "lancedb>=0.20",
+    "qdrant-client>=1.12",
+    "neo4j>=5.20",
 ]
 
 [project.scripts]
@@ -71,5 +81,5 @@ mypy_path = "src"
 
 # These ship no usable type information; their values are typed Any at our boundary.
 [[tool.mypy.overrides]]
-module = ["pyarrow", "pyarrow.*", "lxml", "lxml.*", "py3langid", "py3langid.*", "feedparser"]
+module = ["pyarrow", "pyarrow.*", "lxml", "lxml.*", "py3langid", "py3langid.*", "feedparser", "pysbd"]
 ignore_missing_imports = true
