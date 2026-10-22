@@ -75,9 +75,22 @@ python -c "import torch; print(torch.cuda.get_device_name(), torch.cuda.get_devi
 # NVIDIA GeForce RTX 5060 Ti (12, 0)
 ```
 
-## 5. Docker (Neo4j, and Qdrant for the vector-store prototype)
+## 5. Docker: Neo4j (entity graph) and Qdrant (vector-store prototype)
 
-Install Docker Engine from Docker's apt repository, plus the NVIDIA Container Toolkit if a container needs the GPU. We'll write a `docker-compose.yml` then.
+Install Docker Engine from Docker's own apt repository (see docs.docker.com, "Install Docker Engine on Ubuntu"), then `sudo usermod -aG docker "$USER"`, then **log in again or reboot**. Group changes only reach new sessions, and Ubuntu 26.04 ships neither `newgrp` nor `sg`. As a stop-gap until the next login, `sudo setfacl -m u:$USER:rw /var/run/docker.sock` grants access immediately; it resets when Docker restarts.
+
+Services are defined in `deploy/compose.yml`, with pinned versions and ports bound to `127.0.0.1` only. Data lives under `~/newsrag-data/services/`.
+
+```bash
+deploy/init-env.sh                                   # once: deploy/.env with a generated Neo4j password
+docker compose -f deploy/compose.yml --env-file deploy/.env up -d
+docker compose -f deploy/compose.yml --env-file deploy/.env ps
+```
+
+- **Neo4j:** browser at http://127.0.0.1:7474 (user `neo4j`, password in `deploy/.env`), bolt on 7687.
+- **Qdrant:** http://127.0.0.1:6333/dashboard.
+- **Restarts:** both restart with Docker (`unless-stopped`).
+- **Losing them is not fatal:** both are derived stores, rebuildable from the archive.
 
 ## 6. Running the pipeline
 

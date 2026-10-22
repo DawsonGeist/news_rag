@@ -9,7 +9,7 @@ Newest first. Each entry records what was decided, why, and what would reopen it
 | Sentence splitter | pySBD (rule-based, English); it only chooses *cut points*, and sentences always cover the whole paragraph | Handled every news hard case (Sen., U.S., J.D., 3 p.m., Inc., curly quotes) at about 3k paragraphs/s per core. Using cuts, not its strings, prevents silent text loss (it dropped a trailing hashtag run on a real page). | Quality problems on a hand-checked sample |
 | Passage packing | Whole paragraphs up to 200 words; paragraphs over 400 words split by sentence; no overlap (`seg-1`) | Archive: 4.8 passages/doc, median 174 words, so about 200k vectors/day: 38 GB/yr (512-d int8) to 75 GB/yr (1024-d) | Prototype recall favours overlap or another size |
 | PyTorch | 2.14.1 from the `cu130` wheel index (Blackwell `sm_120`; driver 595 supports CUDA 13.2). ML libraries live in the optional `ml` extra. | Phase 1 installs stay lean; the CUDA build has to come from PyTorch's own index | — |
-| Containers | Docker Engine from Docker's apt repository for Neo4j and Qdrant | Author's choice | — |
+| Containers | Docker Engine from Docker's apt repository. `deploy/compose.yml` runs Neo4j 2026.09.0-community and Qdrant v1.19.2: pinned (each at least a week old), loopback-only ports, data under `~/newsrag-data/services/`, Neo4j password in a gitignored `deploy/.env`. | Author's choice of Docker; pinned and local-only for safety | — |
 
 ## 2026-10-23: P2.0 contracts and storage
 

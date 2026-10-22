@@ -1,0 +1,32 @@
+# Local services for Phase 2: the Neo4j entity graph and Qdrant (vector-store prototype).
+#   docker compose -f deploy/compose.yml --env-file deploy/.env up -d
+# deploy/.env (gitignored) holds NEO4J_PASSWORD and NEWSRAG_DATA_DIR; create it with
+# deploy/init-env.sh. Ports bind to 127.0.0.1 only: nothing is reachable from the network.
+# Both stores are derived data, rebuildable from the archive (docs/phase2-design.md).
+name: newsrag
+
+services:
+  neo4j:
+    image: neo4j:2026.09.0-community
+    restart: unless-stopped
+    ports:
+      - "127.0.0.1:7474:7474"   # browser UI
+      - "127.0.0.1:7687:7687"   # bolt (driver)
+    environment:
+      NEO4J_AUTH: "neo4j/${NEO4J_PASSWORD}"
+      # 32 GB machine shared with the pipeline and the GPU worker.
+      NEO4J_server_memory_heap_initial__size: "2g"
+      NEO4J_server_memory_heap_max__size: "4g"
+      NEO4J_server_memory_pagecache_size: "4g"
+    volumes:
+      - "${NEWSRAG_DATA_DIR}/services/neo4j/data:/data"
+      - "${NEWSRAG_DATA_DIR}/services/neo4j/logs:/logs"
+
+  qdrant:
+    image: qdrant/qdrant:v1.19.2
+    restart: unless-stopped
+    ports:
+      - "127.0.0.1:6333:6333"   # HTTP
+      - "127.0.0.1:6334:6334"   # gRPC
+    volumes:
+      - "${NEWSRAG_DATA_DIR}/services/qdrant:/qdrant/storage"

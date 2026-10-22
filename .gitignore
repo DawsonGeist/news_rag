@@ -29,3 +29,6 @@ dist/
 .idea/
 .DS_Store
 Thumbs.db
+
+# Local service secrets (Neo4j password)
+/deploy/.env
