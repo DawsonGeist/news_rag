@@ -2,6 +2,17 @@
 
 Newest first. Each entry records what was decided, why, and what would reopen it.
 
+## 2026-10-22: Wikidata and entity linking (Phase 2 inputs)
+
+| Decision | Choice | Why | Revisit if |
+| --- | --- | --- | --- |
+| Wikidata's roles | (1) the alias index for candidate generation; (2) entity attributes, including positions with start/end dates, CIK and ticker; (3) relation edges for the graph (employer, owner, parent/subsidiary, member of, family, position held); (4) publisher entities matched by official website, bringing in owners and staff | Matches the vision: background entities and publisher staff come from knowledge-base relations, not news co-mentions | — |
+| Wikidata source | A local subset streamed from the periodic dump (monthly refresh), recorded as a snapshot version on every link | Local-first; the public query service is rate-limited and remote | — |
+| Subset scope | **1 hop**: entities of the types we care about (people, organizations, companies, places, legislation, events) with English labels, plus their direct relation neighbours | Author's choice; expand to 2 hops later if background discovery needs it | Graph exploration feels too shallow |
+| Ambiguity | Candidate generation → scoring (popularity prior, type agreement, context match, coherence, time validity, locality, within-document coreference) → link above a high threshold; keep close runners-up as lower-confidence `MentionLink` edges; otherwise a `local:` entity. Manual link corrections are final (like feed decisions). Prototype ReFinED first. | Precision first (existing decision); links are scored edges, never merges | — |
+| Linking cadence | Continuous micro-batches: the Phase 2 GPU worker processes newly stored Documents every minute or so (segment → NER → link) | Author wants the graph as current as possible; per-minute batches are close to per-article and are the shape notifications need | — |
+| Graph confidence UI | High-confidence links by default, plus a **confidence slider**. The server returns the subgraph with per-edge confidence down to a floor (about 0.3); the browser filters on the slider without re-querying. Layout stays fixed while filtering; WebGL renderer. An edge's score combines both endpoints' link confidence with the relation's confidence. | Author's request; client-side filtering keeps it cheap | Subgraphs grow beyond about 10k elements |
+
 ## 2026-10-19: Planned network architecture (VPS edge), not built yet
 
 The author plans to rent a VPS as the system's public edge. Build towards this; nothing below exists yet.
