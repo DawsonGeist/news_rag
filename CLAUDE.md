@@ -14,7 +14,7 @@ A local-first search engine over news and long-form content. It finds articles b
 
 ## Status
 
-Phase 1 (vet, poll, fetch, extract, store) is built and running as a systemd user service. Gate 1 passes 6 of 7 criteria ([docs/gate1-review.md](docs/gate1-review.md)); G1.5 is waiting for the author to verify the golden pages. Phase 2 (segment, embed, extract entities, link, evaluate) is a **draft design for review**, [docs/phase2-design.md](docs/phase2-design.md). Don't build Phase 2 until the author approves it.
+Phase 1 (vet, poll, fetch, extract, store) is **complete**: it runs as a systemd user service and passes all 7 Gate 1 criteria ([docs/gate1-review.md](docs/gate1-review.md)). Phase 2 (segment, embed, extract entities, link, evaluate) has an **approved design**, [docs/phase2-design.md](docs/phase2-design.md); build starts at P2.0. The graph store is Neo4j; the vector store is chosen by the P2.1 prototype.
 
 ## Layout
 

@@ -36,7 +36,7 @@ from newsrag.extract.text import (
     word_count,
 )
 
-EXTRACTOR_VERSION = "extract-2"
+EXTRACTOR_VERSION = "extract-3"
 """Hand-bumped whenever output changes for an existing input."""
 
 NON_ARTICLE_MAX_WORDS = 80
@@ -70,9 +70,21 @@ MODIFIED_META = ("article:modified_time", "og:updated_time", "datemodified")
 # are deliberately absent: free sites such as NPR use them for donation prompts.
 PAYWALL_MARKERS = re.compile(
     r"paywall|regwall|subscriber[-_ ]?only|subscribers[-_ ]?only|premium[-_]content|"
-    r"metered[-_]?content|article[-_]locked|subscription[-_]required",
+    r"metered[-_]?content|article[-_]locked|subscription[-_]required|"
+    # Ghost's members-only gate (extract-3; foodsafetynews.com previews read as full text).
+    r"post-upgrade-cta|members[-_]?only",
     re.IGNORECASE,
 )
+
+# Markup that is never visible article text, pruned before extraction (extract-3).
+# <template> is inert until a script clones it, but trafilatura reads it; notus.org's
+# sign-in modal ("New code will be available in 1:00") leaked into article bodies.
+INVISIBLE_XPATH = [
+    "//template",
+    "//dialog",
+    "//*[@role='dialog']",
+    "//*[@aria-modal='true']",
+]
 
 _CHARSET = re.compile(r"charset\s*=\s*[\"']?([\w.:-]+)", re.IGNORECASE)
 _META_CHARSET = re.compile(rb"<meta[^>]+charset\s*=\s*[\"']?([\w.:-]+)", re.IGNORECASE)
@@ -226,6 +238,7 @@ def extract(body: bytes, ctx: ExtractContext) -> Document | ExtractFailure:
     result = trafilatura.bare_extraction(
         html,
         url=final_url,
+        prune_xpath=INVISIBLE_XPATH,
         include_comments=False,
         include_tables=True,
         with_metadata=True,

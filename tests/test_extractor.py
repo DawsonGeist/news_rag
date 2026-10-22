@@ -91,7 +91,7 @@ def test_document_identity_fields() -> None:
     assert doc.raw_blob_hash == ids.sha256_hex(body)
     assert doc.content_hash == ids.content_hash(doc.title, doc.extracted_text)
     assert doc.final_url == "https://millbrookledger.example/news/solar-farm-approved"
-    assert doc.extractor_version.startswith("extract-2+trafilatura-")
+    assert doc.extractor_version.startswith("extract-3+trafilatura-")
     assert doc.ingested_at == doc.fetched_at  # provisional until the writer flushes
 
 
@@ -145,6 +145,39 @@ def test_full_content_feed_is_full_text_not_summary_only() -> None:
     teaser = "<p>" + " ".join(f"word{i}" for i in range(40)) + "</p>"
     doc = extract(html, context("teaser", {"feed_summary": teaser}))
     assert isinstance(doc, Document) and doc.content_kind is ContentKind.SUMMARY_ONLY
+
+
+def test_invisible_markup_is_not_article_text() -> None:
+    article = "".join(
+        f"<p>Real paragraph {i} of the story about the council budget vote.</p>" for i in range(8)
+    )
+    hidden = (
+        "<template><p>New code will be available in 1:00</p></template>"
+        "<div role='dialog'><p>Let us try this again.</p></div>"
+        "<dialog><p>Please reenter your email.</p></dialog>"
+        "<div aria-modal='true'><p>Sign in to keep reading.</p></div>"
+    )
+    html = (
+        '<html><head><script type="application/ld+json">{"@type": "NewsArticle"}</script></head>'
+        f"<body><article>{article}{hidden}</article></body></html>"
+    ).encode()
+    doc = extract(html, context("modal", {}))
+    assert isinstance(doc, Document)
+    for leaked in ("New code", "try this again", "reenter", "Sign in"):
+        assert leaked not in doc.extracted_text
+    assert doc.extracted_text.split("\n\n")[-1].startswith("Real paragraph 7")
+
+
+def test_ghost_members_gate_is_paywall() -> None:
+    html = (
+        b'<html><head><script type="application/ld+json">{"@type": "Article"}</script></head>'
+        b"<body><article><p>The first paragraph of a members-only post is a preview.</p>"
+        b"<p>A second preview paragraph.</p>"
+        b'<aside class="gh-post-upgrade-cta"><p>This post is for subscribers only</p></aside>'
+        b"</article></body></html>"
+    )
+    doc = extract(html, context("ghost", {}))
+    assert isinstance(doc, Document) and doc.content_kind is ContentKind.SUSPECTED_PAYWALL
 
 
 def test_unparseable_is_a_failure_not_an_exception() -> None:

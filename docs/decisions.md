@@ -2,6 +2,16 @@
 
 Newest first. Each entry records what was decided, why, and what would reopen it.
 
+## 2026-10-22: Phase 2 design answers; extractor extract-3
+
+| Decision | Choice | Why | Revisit if |
+| --- | --- | --- | --- |
+| Retrieval unit | **Passages** (consecutive paragraphs packed to about 120–200 words); sentences located at query time | Author approved. News paragraphs average about 28 words, too short to embed alone; about 4× fewer vectors | The prototype shows paragraph-level recall clearly better |
+| Gate 2 retrieval target | Set recall@50 **after the first measurement** | No baseline yet to pick a number from | — |
+| Graph store | **Neo4j** (Community edition, run locally, e.g. Docker) | Author's choice: mature path queries (Cypher), tooling and visualization ecosystem; fits the entity graph's subgraph, path and expand needs. Crash-safe transactions. | Path queries or updates too slow at archive scale |
+| Vector store | Still decided by the P2.1 prototype: LanceDB vs **Qdrant** vs **Neo4j's built-in vector index** (one less service if it's good enough) | Qdrant is a vector database, not a graph alternative, so the author's "unless Qdrant is superior" is evaluated here | — |
+| Extractor `extract-3` | Prune `<template>`, `<dialog>`, `[role=dialog]` and `[aria-modal=true]` before extraction; Ghost's `post-upgrade-cta` / members-only gate is a paywall marker | Found by the G1.5 golden set (notus.org sign-in modal text in bodies; foodsafetynews.com previews read as full text) | — |
+
 ## 2026-10-22: Wikidata and entity linking (Phase 2 inputs)
 
 | Decision | Choice | Why | Revisit if |

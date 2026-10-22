@@ -1,6 +1,6 @@
 # Phase 2 design: segment, embed, extract entities, link, evaluate retrieval
 
-Status: **draft for the author's review** · 2026-10-22 · nothing here is built
+Status: **approved design, 2026-10-22** · build not started
 
 Phase 2 turns the archive into searchable, entity-aware data. Every stored Document gets:
 - **segments:** paragraphs, sentences and passages, each with locators
@@ -82,6 +82,7 @@ What it must do: kNN over passages, **filtered** by entity (passages in document
 
 | Option | Pros | Cons |
 | --- | --- | --- |
+| **Neo4j vector index** (the graph store already chosen) | One service for graph and vectors; vectors next to entities | Filtered kNN at millions of passages needs measuring |
 | **LanceDB** (embedded, on-disk) | Columnar like the archive; vector index plus scalar filters; no server; versioned datasets | Write path and crash behaviour must be checked against our durability protocol |
 | **Qdrant** (server, Docker) | Mature filtered HNSW (payload indexes), snapshots | A separate service and its own durability model; Docker |
 | **Parquet + FAISS/hnswlib** (DIY) | Full control | We'd own filtered search, incremental updates and crash safety. The overview advises against hand-building. |
@@ -121,7 +122,7 @@ The expected size is a few million entities and a few tens of GB, measured on th
 
 **Publishers:** each `source_id` domain is matched to Wikidata's official website (P856), which makes the publisher an entity, bringing in its owner and staff (vision §4).
 
-## Entity graph store: decided with the vector prototype (P2.2)
+## Entity graph store: Neo4j (decided 2026-10-22)
 
 **What it must do** (vision §2): get the subgraph around an entity; find the paths between A and B up to k hops (start with k ≤ 4); expand any node; keep per-edge confidence for the client-side slider; and absorb continuous updates from the micro-batches.
 
@@ -132,7 +133,11 @@ The expected size is a few million entities and a few tens of GB, measured on th
 | **Neo4j Community** (server) | Mature, Cypher, a rich ecosystem; another service to run |
 | **In-memory** (NetworkX/rustworkx) over a loaded subgraph | Fine for expanding around a node; not for global path search over millions of edges |
 
-Prototype: build the 1-hop KB graph plus co-mention edges from the archive, then time the subgraph, path and expand queries at realistic sizes, along with update cost and crash behaviour. Record the decision.
+**Decided: Neo4j Community, run locally** (decisions.md 2026-10-22). P2.2 now sets up its schema rather than choosing an engine:
+- **Nodes:** `Entity` (`entity_id` `wd:Q…`/`local:…`, type, label, `kb_snapshot`), plus `Publisher`.
+- **Edges:** `RELATION` (from `EntityRelation`, with `relation`, `source`, `confidence`, `valid_from`/`valid_to`), and `CO_MENTION` (aggregated per entity pair, with document count, combined confidence, and first/last seen).
+- **Load and test:** load the 1-hop KB graph plus co-mention edges from the archive, then time the subgraph, path (up to 4 hops) and expand queries, and the micro-batch update cost.
+- **Operations:** Neo4j runs as its own service (Docker or a system package), with backups via `neo4j-admin dump`. It's a **derived store**: rebuildable from the archive plus the KB snapshot, so losing it costs only time.
 
 ## Evaluation (component 13) and Gate 2
 
@@ -170,8 +175,10 @@ P2.1 and P2.2 are prototypes whose results go back to the author before the code
 - **The size of the Wikidata dump download:** a monthly transfer of about 130 GB. Check that the ISP or VPS bandwidth is fine.
 - **The MarketBeat network** (if kept) would dominate company mentions. Tag it as automated before computing entity statistics (ideas.md).
 
-## Open questions for the author
+## Answered by the author (2026-10-22)
 
-1. **Passages:** are passages (about 120 to 200 words) as the retrieval unit OK, with sentences located at query time? (Recommended.)
-2. **Gate 2 targets:** set the recall@50 target after the first measurement, or fix one now?
-3. **Graph store:** any preference for a server (Neo4j, Qdrant) over embedded (DuckDB, LanceDB, an embedded graph database)? Embedded keeps operations simpler; servers bring mature tooling.
+1. **Passages** are the retrieval unit; sentences are located at query time.
+2. **Gate 2's recall@50 target** is set after the first measurement.
+3. **Graph store: Neo4j.** The vector store is still chosen by the P2.1 prototype, among LanceDB, Qdrant and Neo4j's own vector index.
+
+The design is approved in principle. Build follows the order above, with the P2.1 prototype results going to the author before the code that depends on them.
