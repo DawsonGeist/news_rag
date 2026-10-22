@@ -13,9 +13,11 @@ from newsrag.contracts.v1.enrichment import (
     Embedding,
     EmbeddingTarget,
     Entity,
+    EntityRelation,
     EntityType,
     Mention,
     MentionLink,
+    RelationSource,
     RelationType,
     Segment,
     SegmentLevel,
@@ -34,7 +36,16 @@ from newsrag.contracts.v1.feeds import (
 
 # Records with an exported JSON Schema in contracts/v1/schemas/. Stable unless noted.
 STABLE_RECORDS = (Document, StageEvent, FeedCandidate, FeedHealthReport)
-PROVISIONAL_RECORDS = (Segment, Embedding, Mention, Entity, MentionLink, Snippet, DocRelation)
+PROVISIONAL_RECORDS = (
+    Segment,
+    Embedding,
+    Mention,
+    Entity,
+    MentionLink,
+    EntityRelation,
+    Snippet,
+    DocRelation,
+)
 
 __all__ = [
     "SCHEMA_VERSION",
@@ -47,6 +58,7 @@ __all__ = [
     "Embedding",
     "EmbeddingTarget",
     "Entity",
+    "EntityRelation",
     "EntityType",
     "FeedCandidate",
     "FeedHealthReport",
@@ -59,6 +71,7 @@ __all__ = [
     "MentionLink",
     "PageLocator",
     "Pipeline",
+    "RelationSource",
     "RelationType",
     "Segment",
     "SegmentLevel",

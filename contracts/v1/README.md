@@ -9,12 +9,13 @@ These are the rules every component follows so that any component can be rebuilt
 | Record models (source of truth) | [src/newsrag/contracts/v1/](../../src/newsrag/contracts/v1/) | Pydantic v2. Validation rules are code, not prose. |
 | JSON Schemas | [schemas/](schemas/) | Generated with `newsrag contracts export`; a test fails if they are stale. Use them from non-Python components. |
 | Crawl-state DDL | [src/newsrag/contracts/v1/sql/crawl_state.sql](../../src/newsrag/contracts/v1/sql/crawl_state.sql) | SQLite. Every table names its single owning component. |
+| Enrichment-state DDL (provisional) | [src/newsrag/contracts/v1/sql/enrichment_state.sql](../../src/newsrag/contracts/v1/sql/enrichment_state.sql) | Phase 2: `enrichments` (enricher progress) and `link_overrides` (final manual link corrections). Applied after the crawl state on every start. |
 | ID and hashing rules | [src/newsrag/ids.py](../../src/newsrag/ids.py) | Pinned by `tests/test_ids.py`. |
 
 ## Stability
 
 - **Stable:** `Document`, `StageEvent`, `FeedCandidate`, `FeedHealthReport`, the crawl-state DDL and `ids.py`. A minor change (`schema_version` 1.0 → 1.1) may only add optional fields or new enum values. Anything else is a breaking change and goes in `contracts/v2/`, with the old version kept readable.
-- **Provisional:** `Segment`, `Embedding`, `Mention`, `Entity`, `MentionLink`, `Snippet` and `DocRelation`. They can change freely until the component that produces them ships. At that point they become stable.
+- **Provisional:** `Segment`, `Embedding`, `Mention`, `Entity`, `MentionLink`, `EntityRelation`, `Snippet` and `DocRelation`, plus the enrichment-state DDL. They can change freely until the component that produces them ships. At that point they become stable.
 
 Every record carries `schema_version`. Every derived record also carries `pipeline_version`, plus the `model_id`, `chunker_version` or `linker_version` that produced it.
 
@@ -28,6 +29,8 @@ All IDs are deterministic, so retries and re-runs are idempotent.
 | `doc_id` | `hash32(url_key(canonical_url))`. Assigned after fetching, once the canonical URL is known. | 32 hex |
 | `feed_id` | `hash32(url_key(feed_url))` | 32 hex |
 | `segment_id`, `mention_id`, `snippet_id` | `hash32` of the producing inputs, including the version of the code that made them (see each model's docstring) | 32 hex |
+| `relation_id` | `hash32(src:relation:dst:source:valid_from)`. The same edge from different sources stays separate. | 32 hex |
+| `override_id` | `hash32(kind:surface:doc_id:entity_id)` | 32 hex |
 | `event_id`, `file_id` (a Parquet part in `table_files`) | ULID | 26 chars |
 | `content_hash` | `sha256(title + "\n\n" + extracted_text)`. A headline change counts as a new revision. | 64 hex |
 | `raw_blob_hash` | `sha256` of the raw response body bytes | 64 hex |
@@ -106,6 +109,7 @@ Every fetched page gets a Document, including paywalled and non-article pages. F
 
 ## Durability protocol
 
+0. **One writer per table group.** Table files belong to groups (`storage.tables.TABLE_GROUPS`): `documents` is written by the storage writer, and `enrichment` (segments, mentions, mention links, snippets, entities, entity relations) by the enricher. Each group has exactly one writer process, holding the group's lock in `state/locks/`. Only that writer installs, compacts or removes files under its tables' `tables/<table>/` directories, and its startup cleanup never looks outside them, because another group's writer may be mid-install.
 1. **Stage a file:** write it into the process's own staging area under `tmp/` and fsync it. Each area is `tmp/<owner>-<pid>-<ulid>/`, guarded by an flock on `<name>.lock`, so one process's cleanup never deletes another live process's files.
 2. **Commit:** open a single SQLite write transaction (`BEGIN IMMEDIATE`; WAL, `synchronous=FULL`). Inside it:
    - `os.replace` the file into place and fsync its directory, plus any new parent directories

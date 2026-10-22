@@ -19,7 +19,7 @@ import pyarrow.parquet as pq
 from newsrag.storage.blobs import BLOB_SUFFIX, blob_rel_path
 from newsrag.storage.fsio import file_sha256, fsync_dir, sweep_tmp
 from newsrag.storage.state import transaction
-from newsrag.storage.tables import DOCUMENT_SCHEMA
+from newsrag.storage.tables import DOCUMENT_SCHEMA, DOCUMENTS, TABLE_GROUPS
 from newsrag.timeutil import to_db
 
 # A lease belongs to the component that took it, so each reclaims only its own states.
@@ -47,24 +47,29 @@ def reclaim_expired_leases(
         return cur.rowcount
 
 
-def remove_uncommitted_table_files(conn: sqlite3.Connection, data_dir: Path) -> int:
-    """Delete files under ``tables/`` without a ``committed`` manifest row: parts from a
-    crash between install and commit, and parts superseded by compaction.
+def remove_uncommitted_table_files(
+    conn: sqlite3.Connection, data_dir: Path, group: str = "documents"
+) -> int:
+    """Delete files of ``group``'s tables without a ``committed`` manifest row: parts from
+    a crash between install and commit, and parts superseded by compaction.
 
-    Only the storage writer may call this, while holding the writer lock.
+    Only the group's writer may call this, while holding the group's lock: another
+    group's writer may be mid-install (file renamed in, transaction not yet committed),
+    so this never looks outside ``tables/<table>/`` for its own tables.
     """
-    tables = data_dir / "tables"
-    if not tables.exists():
-        return 0
     committed = {
         r[0] for r in conn.execute("SELECT rel_path FROM table_files WHERE state = 'committed'")
     }
     removed = 0
-    for path in tables.rglob("*.parquet"):
-        if path.relative_to(data_dir).as_posix() not in committed:
-            path.unlink()
-            fsync_dir(path.parent)
-            removed += 1
+    for table_name in TABLE_GROUPS[group]:
+        root = data_dir / "tables" / table_name
+        if not root.exists():
+            continue
+        for path in root.rglob("*.parquet"):
+            if path.relative_to(data_dir).as_posix() not in committed:
+                path.unlink()
+                fsync_dir(path.parent)
+                removed += 1
     return removed
 
 
@@ -89,7 +94,7 @@ def recover_writer(conn: sqlite3.Connection, data_dir: Path, now: datetime) -> R
     """Startup recovery for the storage writer. Caller holds the writer lock."""
     return RecoveryReport(
         tmp_removed=sweep_tmp(data_dir / "tmp"),
-        table_files_removed=remove_uncommitted_table_files(conn, data_dir),
+        table_files_removed=remove_uncommitted_table_files(conn, data_dir, "documents"),
         leases_reclaimed=reclaim_all_extracting(conn, now),
     )
 
@@ -101,7 +106,8 @@ def verify_storage(conn: sqlite3.Connection, data_dir: Path, deep: bool = True) 
     """
     problems: list[str] = []
     for r in conn.execute(
-        "SELECT file_id, rel_path, sha256, row_count FROM table_files WHERE state = 'committed'"
+        "SELECT file_id, table_name, rel_path, sha256, row_count FROM table_files "
+        "WHERE state = 'committed'"
     ):
         path = data_dir / r["rel_path"]
         if not path.exists():
@@ -109,6 +115,11 @@ def verify_storage(conn: sqlite3.Connection, data_dir: Path, deep: bool = True) 
             continue
         if deep and file_sha256(path) != r["sha256"]:
             problems.append(f"sha256 mismatch: {r['rel_path']}")
+            continue
+        if deep and r["table_name"] != DOCUMENTS:
+            # Derived tables have no ledger like doc_revisions; check the file's row count.
+            if pq.read_metadata(path).num_rows != r["row_count"]:
+                problems.append(f"row_count mismatch: {r['rel_path']}")
             continue
         if deep:
             table = pq.read_table(path, schema=DOCUMENT_SCHEMA, columns=["doc_id", "revision"])

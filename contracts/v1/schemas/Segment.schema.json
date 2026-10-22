@@ -37,7 +37,9 @@
     "SegmentLevel": {
       "enum": [
         "paragraph",
-        "sentence"
+        "sentence",
+        "passage",
+        "title"
       ],
       "title": "SegmentLevel",
       "type": "string"
@@ -110,7 +112,7 @@
   },
   "$id": "newsrag/contracts/v1/Segment",
   "additionalProperties": false,
-  "description": "A paragraph or sentence of a Document revision.\n\n``segment_id = hash32(f\"{doc_id}:{revision}:{level}:{start}:{end}:{chunker_version}\")``,\nso re-running the same chunker is idempotent. Sentences point to their paragraph.\nFor text, ``text == extracted_text[locator.start:locator.end]``.",
+  "description": "A paragraph, sentence, passage or title of a Document revision.\n\n``segment_id = hash32(f\"{doc_id}:{revision}:{level}:{start}:{end}:{chunker_version}\")``,\nso re-running the same chunker is idempotent. Sentences point to their paragraph\n(``parent_id``); passages and titles have no parent. A passage's locator spans the\nwhole paragraph range it packs, so its text includes the \"\\n\\n\" separators.\nFor text, ``text == extracted_text[locator.start:locator.end]`` (or ``title`` for\n``field=\"title\"``).",
   "properties": {
     "chunker_version": {
       "title": "Chunker Version",

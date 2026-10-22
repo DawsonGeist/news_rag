@@ -19,10 +19,10 @@ from newsrag.contracts.v1 import Document, Stage, StageEvent, StageStatus
 from newsrag.obs.events import new_event, record
 from newsrag.storage.fsio import TmpArea
 from newsrag.storage.state import transaction
-from newsrag.storage.tables import install_part, stage_documents_part
+from newsrag.storage.tables import GROUP_LOCKS, install_part, stage_documents_part
 from newsrag.timeutil import from_db, to_db, utcnow
 
-WRITER_LOCK = "writer.lock"
+WRITER_LOCK = GROUP_LOCKS["documents"]  # the documents table group's single writer
 
 
 @dataclass(frozen=True)

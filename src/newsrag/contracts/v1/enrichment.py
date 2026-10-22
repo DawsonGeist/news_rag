@@ -8,8 +8,9 @@ revision it was derived from, because locators index that revision's text.
 from __future__ import annotations
 
 from enum import StrEnum
+from typing import Self
 
-from pydantic import Field
+from pydantic import Field, model_validator
 
 from newsrag.contracts.v1.common import (
     SCHEMA_VERSION,
@@ -26,14 +27,19 @@ from newsrag.contracts.v1.common import (
 class SegmentLevel(StrEnum):
     PARAGRAPH = "paragraph"
     SENTENCE = "sentence"
+    PASSAGE = "passage"  # consecutive paragraphs packed to ~120-200 words: the retrieval unit
+    TITLE = "title"  # the Document's title, locator field "title"
 
 
 class Segment(ContractModel):
-    """A paragraph or sentence of a Document revision.
+    """A paragraph, sentence, passage or title of a Document revision.
 
     ``segment_id = hash32(f"{doc_id}:{revision}:{level}:{start}:{end}:{chunker_version}")``,
-    so re-running the same chunker is idempotent. Sentences point to their paragraph.
-    For text, ``text == extracted_text[locator.start:locator.end]``.
+    so re-running the same chunker is idempotent. Sentences point to their paragraph
+    (``parent_id``); passages and titles have no parent. A passage's locator spans the
+    whole paragraph range it packs, so its text includes the "\\n\\n" separators.
+    For text, ``text == extracted_text[locator.start:locator.end]`` (or ``title`` for
+    ``field="title"``).
     """
 
     schema_version: SchemaVersion = SCHEMA_VERSION
@@ -53,6 +59,8 @@ class EmbeddingTarget(StrEnum):
     PARAGRAPH = "paragraph"
     SENTENCE = "sentence"
     SNIPPET = "snippet"
+    PASSAGE = "passage"
+    TITLE = "title"
 
 
 class Embedding(ContractModel):
@@ -113,6 +121,9 @@ class Entity(ContractModel):
     aliases: list[str] = Field(default_factory=list)
     kb_id: str | None = None
     description: str | None = None
+    kb_snapshot: str | None = Field(
+        default=None, description="Wikidata snapshot the attributes came from; None for local:."
+    )
     created_at: UtcDatetime
 
 
@@ -128,8 +139,56 @@ class MentionLink(ContractModel):
         description="e.g. 'exact_alias', 'context_model', 'coref', 'unresolved_self'."
     )
     linker_version: str
+    kb_snapshot: str | None = Field(
+        default=None, description="Wikidata snapshot the candidate came from."
+    )
     features: dict[str, float] = Field(default_factory=dict)
     created_at: UtcDatetime
+
+
+class RelationSource(StrEnum):
+    WIKIDATA = "wikidata"  # a KB claim between two entities
+    NEWS = "news"  # co-mention or relation extracted from Documents
+    SEC_EDGAR = "sec_edgar"  # filings pipeline (ideas.md)
+    MANUAL = "manual"  # a human-entered edge; final
+
+
+class EntityRelation(ContractModel):
+    """Scored, sourced edge between two entities: the entity graph's building block.
+
+    ``relation`` is a Wikidata property id for KB edges (``"P108"`` employer) or a
+    pipeline name such as ``"co_mention"``. Edges are never merged across sources: the
+    same pair can have a Wikidata edge and a news edge, each with its own confidence.
+    ``relation_id = hash32(f"{src}:{relation}:{dst}:{source}:{valid_from}")``, so a
+    rebuild of the same edge is idempotent. ``valid_from``/``valid_to`` come from
+    Wikidata qualifiers (start and end time) and let timelines and time-aware linking
+    ask "who held this position on that date".
+    """
+
+    schema_version: SchemaVersion = SCHEMA_VERSION
+    relation_id: Hex32
+    src_entity_id: str
+    dst_entity_id: str
+    relation: str
+    source: RelationSource
+    confidence: Confidence
+    valid_from: UtcDatetime | None = None
+    valid_to: UtcDatetime | None = None
+    evidence_doc_ids: list[Hex32] = Field(
+        default_factory=list, description="Documents supporting a news edge (a sample)."
+    )
+    weight: int = Field(default=1, ge=1, description="Supporting occurrences, e.g. co-mentions.")
+    kb_snapshot: str | None = None
+    pipeline_version: str
+    created_at: UtcDatetime
+
+    @model_validator(mode="after")
+    def _check(self) -> Self:
+        if self.valid_from and self.valid_to and self.valid_to < self.valid_from:
+            raise ValueError("valid_to < valid_from")
+        if self.src_entity_id == self.dst_entity_id:
+            raise ValueError("self-loop")
+        return self
 
 
 class StanceLabel(StrEnum):

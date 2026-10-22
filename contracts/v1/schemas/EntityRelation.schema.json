@@ -1,0 +1,127 @@
+{
+  "$defs": {
+    "RelationSource": {
+      "enum": [
+        "wikidata",
+        "news",
+        "sec_edgar",
+        "manual"
+      ],
+      "title": "RelationSource",
+      "type": "string"
+    }
+  },
+  "$id": "newsrag/contracts/v1/EntityRelation",
+  "additionalProperties": false,
+  "description": "Scored, sourced edge between two entities: the entity graph's building block.\n\n``relation`` is a Wikidata property id for KB edges (``\"P108\"`` employer) or a\npipeline name such as ``\"co_mention\"``. Edges are never merged across sources: the\nsame pair can have a Wikidata edge and a news edge, each with its own confidence.\n``relation_id = hash32(f\"{src}:{relation}:{dst}:{source}:{valid_from}\")``, so a\nrebuild of the same edge is idempotent. ``valid_from``/``valid_to`` come from\nWikidata qualifiers (start and end time) and let timelines and time-aware linking\nask \"who held this position on that date\".",
+  "properties": {
+    "confidence": {
+      "maximum": 1.0,
+      "minimum": 0.0,
+      "title": "Confidence",
+      "type": "number"
+    },
+    "created_at": {
+      "format": "date-time",
+      "title": "Created At",
+      "type": "string"
+    },
+    "dst_entity_id": {
+      "title": "Dst Entity Id",
+      "type": "string"
+    },
+    "evidence_doc_ids": {
+      "description": "Documents supporting a news edge (a sample).",
+      "items": {
+        "pattern": "^[0-9a-f]{32}$",
+        "type": "string"
+      },
+      "title": "Evidence Doc Ids",
+      "type": "array"
+    },
+    "kb_snapshot": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Kb Snapshot"
+    },
+    "pipeline_version": {
+      "title": "Pipeline Version",
+      "type": "string"
+    },
+    "relation": {
+      "title": "Relation",
+      "type": "string"
+    },
+    "relation_id": {
+      "pattern": "^[0-9a-f]{32}$",
+      "title": "Relation Id",
+      "type": "string"
+    },
+    "schema_version": {
+      "default": "1.0",
+      "pattern": "^1\\.\\d+$",
+      "title": "Schema Version",
+      "type": "string"
+    },
+    "source": {
+      "$ref": "#/$defs/RelationSource"
+    },
+    "src_entity_id": {
+      "title": "Src Entity Id",
+      "type": "string"
+    },
+    "valid_from": {
+      "anyOf": [
+        {
+          "format": "date-time",
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Valid From"
+    },
+    "valid_to": {
+      "anyOf": [
+        {
+          "format": "date-time",
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Valid To"
+    },
+    "weight": {
+      "default": 1,
+      "description": "Supporting occurrences, e.g. co-mentions.",
+      "minimum": 1,
+      "title": "Weight",
+      "type": "integer"
+    }
+  },
+  "required": [
+    "relation_id",
+    "src_entity_id",
+    "dst_entity_id",
+    "relation",
+    "source",
+    "confidence",
+    "pipeline_version",
+    "created_at"
+  ],
+  "title": "EntityRelation",
+  "type": "object",
+  "x-stability": "provisional"
+}

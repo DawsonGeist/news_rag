@@ -27,6 +27,31 @@ from newsrag.timeutil import to_db
 DOCUMENTS = "documents"
 PARQUET_COMPRESSION = "zstd"
 
+# Table groups. Each group has exactly ONE writer process, holding the group's lock in
+# ``state/locks/``; only that process installs, compacts or removes the group's files
+# under ``tables/<table>/``. Recovery and compaction are scoped to the caller's group,
+# so one writer's startup cleanup can never delete a part another writer is installing.
+TABLE_GROUPS: dict[str, tuple[str, ...]] = {
+    "documents": (DOCUMENTS,),  # the storage writer
+    "enrichment": (  # the Phase 2 enricher
+        "segments",
+        "mentions",
+        "mention_links",
+        "snippets",
+        "entities",
+        "entity_relations",
+    ),
+}
+GROUP_LOCKS = {"documents": "writer.lock", "enrichment": "enricher.lock"}
+
+
+def group_of(table_name: str) -> str:
+    for group, tables in TABLE_GROUPS.items():
+        if table_name in tables:
+            return group
+    raise KeyError(f"table {table_name!r} belongs to no table group")
+
+
 _TS = pa.timestamp("us", tz="UTC")
 
 DOCUMENT_SCHEMA = pa.schema(
@@ -95,28 +120,43 @@ class StagedPart:
     max_ingested_at: datetime | None
 
 
-def stage_documents_part(tmp: TmpArea, docs: Sequence[Document]) -> StagedPart:
-    """Write ``docs`` as one Parquet part in the tmp area and fsync it."""
-    if not docs:
+def stage_part(
+    tmp: TmpArea,
+    table_name: str,
+    table: pa.Table,
+    min_ingested_at: datetime | None = None,
+    max_ingested_at: datetime | None = None,
+) -> StagedPart:
+    """Write any table's rows as one hot Parquet part in the tmp area and fsync it.
+    Install it with ``install_part`` inside the writer's transaction."""
+    group_of(table_name)  # unknown tables have no owner and must not be written
+    if table.num_rows == 0:
         raise ValueError("refusing to write an empty part")
     file_id = str(ULID())
     tmp_path = tmp.new_path(".parquet")
     with tmp_path.open("xb") as f:
-        pq.write_table(documents_to_table(docs), f, compression=PARQUET_COMPRESSION)
+        pq.write_table(table, f, compression=PARQUET_COMPRESSION)
         f.flush()
         os.fsync(f.fileno())
-    ingested = [d.ingested_at for d in docs]
     return StagedPart(
         file_id=file_id,
-        table_name=DOCUMENTS,
+        table_name=table_name,
         tmp_path=tmp_path,
-        rel_path=f"tables/{DOCUMENTS}/hot/part-{file_id}.parquet",
-        row_count=len(docs),
+        rel_path=f"tables/{table_name}/hot/part-{file_id}.parquet",
+        row_count=table.num_rows,
         size_bytes=tmp_path.stat().st_size,
         sha256=file_sha256(tmp_path),
-        min_ingested_at=min(ingested),
-        max_ingested_at=max(ingested),
+        min_ingested_at=min_ingested_at,
+        max_ingested_at=max_ingested_at,
     )
+
+
+def stage_documents_part(tmp: TmpArea, docs: Sequence[Document]) -> StagedPart:
+    """Write ``docs`` as one Parquet part in the tmp area and fsync it."""
+    if not docs:
+        raise ValueError("refusing to write an empty part")
+    ingested = [d.ingested_at for d in docs]
+    return stage_part(tmp, DOCUMENTS, documents_to_table(docs), min(ingested), max(ingested))
 
 
 def install_part(conn: sqlite3.Connection, data_dir: Path, part: StagedPart, now: datetime) -> None:

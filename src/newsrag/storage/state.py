@@ -10,12 +10,17 @@ from pathlib import Path
 
 from newsrag.contracts.v1 import SCHEMA_VERSION
 
-DDL_RESOURCE = ("newsrag.contracts.v1", "sql/crawl_state.sql")
+DDL_PACKAGE = "newsrag.contracts.v1"
+# Applied in order on every start; every statement is CREATE ... IF NOT EXISTS, so an
+# existing database gains tables added in later phases without a migration step.
+DDL_FILES = ("sql/crawl_state.sql", "sql/enrichment_state.sql")
 
 
 def ddl() -> str:
-    package, name = DDL_RESOURCE
-    return resources.files(package).joinpath(name).read_text(encoding="utf-8")
+    return "\n".join(
+        resources.files(DDL_PACKAGE).joinpath(name).read_text(encoding="utf-8")
+        for name in DDL_FILES
+    )
 
 
 def connect(path: Path) -> sqlite3.Connection:

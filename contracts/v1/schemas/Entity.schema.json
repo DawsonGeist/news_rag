@@ -63,6 +63,19 @@
       "default": null,
       "title": "Kb Id"
     },
+    "kb_snapshot": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "description": "Wikidata snapshot the attributes came from; None for local:.",
+      "title": "Kb Snapshot"
+    },
     "schema_version": {
       "default": "1.0",
       "pattern": "^1\\.\\d+$",

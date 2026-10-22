@@ -25,6 +25,19 @@
       "title": "Features",
       "type": "object"
     },
+    "kb_snapshot": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "description": "Wikidata snapshot the candidate came from.",
+      "title": "Kb Snapshot"
+    },
     "linker_version": {
       "title": "Linker Version",
       "type": "string"

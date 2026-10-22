@@ -81,7 +81,7 @@ Everything runs on one native Ubuntu desktop (see [docs/setup-linux.md](docs/set
   - for a stable record, make only additive changes (bump the minor `SCHEMA_VERSION`). Anything else goes in `contracts/v2/`.
 - **Never change `ids.py` output for existing inputs.** That changes stored IDs and needs v2.
 - **UTC everywhere.** Use `timeutil.utcnow()`. Naive datetimes are bugs. `published_at` is never back-filled.
-- **Durability:** stage the file in your process's `TmpArea` and fsync it. Inside one `transaction(conn)`, `install` it (`os.replace`, then fsync the directory) and write the manifest rows and the frontier state. A file not in the manifest does not exist. Only the storage writer touches `tables/`, `table_files` and `doc_revisions`. Use `newsrag.storage.fsio` rather than hand-rolling any of this.
+- **Durability:** stage the file in your process's `TmpArea` and fsync it. Inside one `transaction(conn)`, `install` it (`os.replace`, then fsync the directory) and write the manifest rows and the frontier state. A file not in the manifest does not exist. Each table group (`storage.tables.TABLE_GROUPS`) has exactly one writer, which alone touches its `tables/<table>/` files; `doc_revisions` is the storage writer's. Use `newsrag.storage.fsio` rather than hand-rolling any of this.
 - **Derived data is rebuildable.** Every derived row records `pipeline_version` plus its model, chunker or linker version.
 - **Stage events:** every stage writes a `StageEvent`, and lag must stay measurable.
 - **Politeness:** respect robots.txt, keep one request in flight per host, use an identifiable User-Agent, and never evade blocks or paywalls. Content must be open access.

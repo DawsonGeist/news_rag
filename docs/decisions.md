@@ -2,6 +2,15 @@
 
 Newest first. Each entry records what was decided, why, and what would reopen it.
 
+## 2026-10-23: P2.0 contracts and storage
+
+| Decision | Choice | Why | Revisit if |
+| --- | --- | --- | --- |
+| Table groups | Table files belong to groups (`documents`; `enrichment`), each with exactly one writer process and lock. Recovery, compaction and removal are scoped to the caller's group. | A second writer (the enricher) arrives in Phase 2. An unscoped startup sweep would delete another writer's part between its rename and its commit. | — |
+| Derived-table verification | Hash plus row count from Parquet metadata. Only `documents` has a ledger (`doc_revisions`). | Derived tables are tracked through `enrichments`, not a per-row ledger | A derived table needs row-level checks |
+| Enrichment DDL | A separate provisional file, `enrichment_state.sql`, applied after the crawl state with `CREATE IF NOT EXISTS` | Keeps the stable crawl-state DDL untouched; existing databases gain the tables on their next start | — |
+| Entity edges | A new provisional record, `EntityRelation`, with source, confidence, validity dates, evidence and weight. Same-pair edges from different sources stay separate. | The graph needs scored, sourced edges for the confidence slider, timelines and provenance | — |
+
 ## 2026-10-22: Phase 2 design answers; extractor extract-3
 
 | Decision | Choice | Why | Revisit if |

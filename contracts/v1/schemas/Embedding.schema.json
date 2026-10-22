@@ -4,7 +4,9 @@
       "enum": [
         "paragraph",
         "sentence",
-        "snippet"
+        "snippet",
+        "passage",
+        "title"
       ],
       "title": "EmbeddingTarget",
       "type": "string"
