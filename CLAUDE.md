@@ -8,6 +8,7 @@ A local-first search engine over news and long-form content. It finds articles b
 - [contracts/v1/README.md](contracts/v1/README.md): **normative** rules for IDs, revisions, text and locators, time, and durability.
 - [docs/phase1-design.md](docs/phase1-design.md): the current phase, its build order and Gate 1.
 - [docs/decisions.md](docs/decisions.md): what has been decided and why. Add an entry whenever you make a decision.
+- [docs/vision.md](docs/vision.md): what the author wants, in priority order (opinion search, visual entity graph, timelines, notifications). Trace design choices back to it.
 - [docs/ideas.md](docs/ideas.md): parked ideas (EDGAR pipeline, poll scheduling, …). Stick to the design plan; an idea moves into a phase design only when the author picks it up.
 
 ## Status
