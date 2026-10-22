@@ -32,5 +32,6 @@ and its decisions into decisions.md, only when the author picks it up.
 - **Lag report:** exclude hosts in back-off from "oldest ready item", so the line only flags truly stuck work.
 
 ## Operations
+- **Trim SQLite growth** (4.6 KB/doc at the Gate 1 review, more than Parquet's 2.4 KB). Drop `feed_summary` from stored frontier rows (the Document keeps it), and roll up old stage events. Fine for 12 months as is (60 GB forecast).
 - **Stage-event rollups** into hourly percentiles after 30 days. Deferred until the table's size matters.
 - **A `newsrag` shim on PATH** (`~/.local/bin`), so it works without activating the venv.
