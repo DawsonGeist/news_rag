@@ -531,6 +531,26 @@ def fixtures_capture(urls: list[str]) -> None:
             typer.echo(f"{url}: {e}", err=True)
 
 
+@fixtures_app.command("from-archive")
+def fixtures_from_archive(urls: list[str]) -> None:
+    """Make unverified golden cases from pages already in the archive (no new fetch)."""
+    from newsrag.storage.blobs import BlobStore
+    from newsrag.storage.fsio import TmpArea
+    from newsrag.storage.state import connect
+    from newsrag.testing.golden import capture_from_archive
+
+    settings = load_settings()
+    conn = connect(settings.state_db)
+    with TmpArea(settings.tmp_dir, "fixtures") as tmp:
+        blobs = BlobStore(settings.data_dir, tmp)
+        for url in urls:
+            try:
+                typer.echo(f"saved {capture_from_archive(conn, blobs, url)}")
+            except Exception as e:
+                typer.echo(f"{url}: {e}", err=True)
+    conn.close()
+
+
 @fixtures_app.command("refill")
 def fixtures_refill() -> None:
     """Re-fill unverified golden cases from the current extractor (no network)."""

@@ -17,6 +17,7 @@ from __future__ import annotations
 
 import asyncio
 import re
+import sqlite3
 import tempfile
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta
@@ -31,9 +32,10 @@ from newsrag.contracts.v1 import ContentKind, Document
 from newsrag.crawl.fetcher import FetchClaim, Fetcher
 from newsrag.crawl.http import host_of, make_client
 from newsrag.extract.extractor import ExtractContext, extract
+from newsrag.storage.blobs import BlobStore
 from newsrag.storage.fsio import TmpArea
 from newsrag.storage.state import connect, init_schema
-from newsrag.timeutil import utcnow
+from newsrag.timeutil import from_db, utcnow
 
 GOLDEN_DIR = REPO_ROOT / "tests" / "fixtures" / "golden"
 BODY_FILE = "body.bin"
@@ -98,6 +100,34 @@ def capture(settings: Settings, url: str, root: Path = GOLDEN_DIR) -> Path:
         "final_url": final_url,
         "content_type": ctype,
         "fetched_at": fetched_at.isoformat(),
+        "verified": False,
+    }
+    _prefill(case_dir, case)
+    return case_dir
+
+
+def capture_from_archive(
+    conn: sqlite3.Connection, blobs: BlobStore, url: str, root: Path = GOLDEN_DIR
+) -> Path:
+    """Make an unverified golden case from a page already in the archive: its raw blob
+    (no new request to the publisher) and how it was fetched."""
+    row = conn.execute(
+        "SELECT url, final_url, content_type, fetched_at, raw_blob_hash FROM frontier "
+        "WHERE url = ? AND raw_blob_hash IS NOT NULL",
+        (ids.normalize_url(url),),
+    ).fetchone()
+    if row is None:
+        raise LookupError(f"not fetched in the archive: {url}")
+    body = blobs.read(row["raw_blob_hash"])  # raises if the blob expired
+    final_url = row["final_url"] or row["url"]
+    case_dir = root / ids.registered_domain(final_url) / _slug(final_url)
+    case_dir.mkdir(parents=True, exist_ok=True)
+    (case_dir / BODY_FILE).write_bytes(body)
+    case: dict[str, Any] = {
+        "url": row["url"],
+        "final_url": final_url,
+        "content_type": row["content_type"],
+        "fetched_at": from_db(row["fetched_at"]).isoformat(),
         "verified": False,
     }
     _prefill(case_dir, case)
