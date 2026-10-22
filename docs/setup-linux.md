@@ -64,14 +64,18 @@ newsrag test kill                       # Gate 1 kill test, about 20 s
 
 ## 4. GPU stack (Phase 2)
 
-The RTX 5060 Ti is a Blackwell card (`sm_120`). It needs PyTorch wheels built for CUDA 12.8 or newer. Older `cu121` and `cu124` wheels import fine but fail at the first kernel launch. The driver already supports the CUDA 13 runtime. Install PyTorch from the CUDA index that matches the current release when Phase 2 starts, then check it with:
+The RTX 5060 Ti is a Blackwell card (`sm_120`). It needs PyTorch wheels built for CUDA 12.8 or newer. Older `cu121` and `cu124` wheels import fine but fail at the first kernel launch. The 595 driver supports the CUDA 13.2 runtime, so we use the `cu130` wheels.
+
+PyTorch comes from its own package index (pip can't read that from `pyproject.toml`), and then the `ml` extra:
 
 ```bash
+pip install "torch==2.14.1" --index-url https://download.pytorch.org/whl/cu130
+pip install -e ".[dev,ml]"
 python -c "import torch; print(torch.cuda.get_device_name(), torch.cuda.get_device_capability())"
 # NVIDIA GeForce RTX 5060 Ti (12, 0)
 ```
 
-## 5. Docker (only if Phase 2 picks Qdrant)
+## 5. Docker (Neo4j, and Qdrant for the vector-store prototype)
 
 Install Docker Engine from Docker's apt repository, plus the NVIDIA Container Toolkit if a container needs the GPU. We'll write a `docker-compose.yml` then.
 
