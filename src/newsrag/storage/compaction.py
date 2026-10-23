@@ -1,6 +1,7 @@
 """Compaction: merge small Parquet parts into monthly parts of about ``target_bytes``.
 
-Owner: the storage writer (it holds the writer lock while compacting).
+Owner: each table group's writer, for its own tables (``compact`` for documents,
+``compact_derived`` for the enricher's tables).
 
 Each flush writes a small ``hot/`` part. Compaction rewrites, per month of
 ``ingested_at``, the hot parts plus any undersized monthly parts into
@@ -32,7 +33,14 @@ from ulid import ULID
 from newsrag.contracts.v1 import SCHEMA_VERSION
 from newsrag.storage.fsio import TmpArea, file_sha256, fsync_dir, install
 from newsrag.storage.state import transaction
-from newsrag.storage.tables import DOCUMENT_SCHEMA, DOCUMENTS, PARQUET_COMPRESSION
+from newsrag.storage.tables import (
+    DOCUMENT_SCHEMA,
+    DOCUMENTS,
+    PARQUET_COMPRESSION,
+    StagedPart,
+    group_of,
+    install_part,
+)
 from newsrag.timeutil import to_db
 
 TARGET_BYTES = 128 * 1024 * 1024
@@ -213,4 +221,97 @@ def compact(
     report.inputs = len(inputs)
     report.outputs = len(outputs)
     report.rows = sum(len(o.rows) for o in outputs)
+    return report
+
+
+def compact_derived(
+    conn: sqlite3.Connection,
+    data_dir: Path,
+    tmp: TmpArea,
+    table_name: str,
+    schema: pa.Schema,
+    now: datetime,
+    target_bytes: int = TARGET_BYTES,
+) -> CompactionReport:
+    """Merge a derived table's hot parts (and undersized merged parts) into
+    ``tables/<table>/merged/`` parts of about ``target_bytes``. Caller holds the lock
+    of the table's group.
+
+    Simpler than ``compact``: derived tables have no ledger to repoint and no month
+    layout, since they're read by document through the vector store's payload or in
+    bulk for rebuilds, never by ingest month. Same protocol: stage and fsync, then one
+    transaction installs the outputs and supersedes the inputs, then the inputs go.
+    """
+    group_of(table_name)
+    report = CompactionReport()
+    rows = conn.execute(
+        "SELECT file_id, rel_path, size_bytes FROM table_files "
+        "WHERE table_name = ? AND state = 'committed' ORDER BY file_id",
+        (table_name,),
+    ).fetchall()
+    inputs = [
+        _Input(r["file_id"], r["rel_path"], r["size_bytes"])
+        for r in rows
+        if "/hot/" in r["rel_path"] or r["size_bytes"] < target_bytes * SMALL_FRACTION
+    ]
+    if len(inputs) < 2:
+        return report
+
+    outputs: list[StagedPart] = []
+    writer: pq.ParquetWriter | None = None
+    current: tuple[str, Path] | None = None
+    written = n_rows = 0
+
+    def close() -> None:
+        nonlocal writer
+        if writer is None or current is None:
+            return
+        writer.close()
+        writer = None
+        file_id, path = current
+        with path.open("rb+") as f:
+            os.fsync(f.fileno())
+        outputs.append(
+            StagedPart(
+                file_id=file_id,
+                table_name=table_name,
+                tmp_path=path,
+                rel_path=f"tables/{table_name}/merged/part-{file_id}.parquet",
+                row_count=n_rows,
+                size_bytes=path.stat().st_size,
+                sha256=file_sha256(path),
+                min_ingested_at=None,
+                max_ingested_at=None,
+            )
+        )
+
+    for part in inputs:
+        table = pq.read_table(data_dir / part.rel_path, schema=schema)
+        if writer is None or written >= target_bytes:
+            close()
+            current = (str(ULID()), tmp.new_path(".parquet"))
+            writer = pq.ParquetWriter(current[1], schema, compression=PARQUET_COMPRESSION)
+            written = n_rows = 0
+        assert writer is not None
+        writer.write_table(table)
+        written += part.size_bytes
+        n_rows += table.num_rows
+        report.rows += table.num_rows
+    close()
+
+    with transaction(conn):
+        for o in outputs:
+            install_part(conn, data_dir, o, now)
+        conn.executemany(
+            "UPDATE table_files SET state = 'superseded', superseded_by = ? "
+            "WHERE file_id = ? AND state = 'committed'",
+            [(outputs[0].file_id, p.file_id) for p in inputs],
+        )
+    for p in inputs:
+        path = data_dir / p.rel_path
+        path.unlink(missing_ok=True)
+        fsync_dir(path.parent)
+    report.months = 0
+    report.inputs = len(inputs)
+    report.outputs = len(outputs)
     return report

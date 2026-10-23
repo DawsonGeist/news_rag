@@ -40,6 +40,18 @@ extract_max_attempts = 3
 compact_interval_s = 3600.0
 compact_target_mb = 128
 
+[enricher]
+batch_docs = 256
+poll_s = 5.0
+lease_s = 900.0
+max_attempts = 3
+device = "cuda"
+embed_batch = 64
+qdrant_url = "http://127.0.0.1:6333"
+qdrant_wait_s = 120.0
+compact_interval_s = 3600.0
+compact_target_mb = 128
+
 [vet]
 concurrency = 64
 feed_attempts = 3
@@ -51,6 +63,9 @@ reject_english_ratio = 0.5
 review_full_text_ratio = 0.67
 review_date_ratio = 0.5
 review_median_words = 150
+
+[supervisor]
+components = ["poller", "fetcher", "writer", "enricher"]
 
 [retention]
 raw_days = 60

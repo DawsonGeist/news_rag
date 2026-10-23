@@ -61,6 +61,8 @@ asyncio_mode = "auto"
 filterwarnings = [
     # Inside the third-party tld package (via trafilatura's courlan); not our code.
     "ignore:codecs.open\\(\\) is deprecated:DeprecationWarning:tld.*",
+    # Tests run Qdrant in-process, where payload indexes are accepted but unused.
+    "ignore:Payload indexes have no effect in the local Qdrant:UserWarning",
 ]
 
 [tool.ruff]

@@ -14,7 +14,7 @@ A local-first search engine over news and long-form content. It finds articles b
 
 ## Status
 
-Phase 1 (vet, poll, fetch, extract, store) is **complete**: it runs as a systemd user service and passes all 7 Gate 1 criteria ([docs/gate1-review.md](docs/gate1-review.md)). Phase 2 (segment, embed, extract entities, link, evaluate) has an **approved design**, [docs/phase2-design.md](docs/phase2-design.md). Done: P2.0 (contracts, table groups), P2.1 (segmenter `seg-1`; vector store prototype → **Qdrant**). In progress: P2.2 (local Wikidata subset: `newsrag kb build`; first snapshot `20261019` builds after the dump download). Services (Neo4j graph, Qdrant vectors) run from `deploy/compose.yml`.
+Phase 1 (vet, poll, fetch, extract, store) is **complete**: it runs as a systemd user service and passes all 7 Gate 1 criteria ([docs/gate1-review.md](docs/gate1-review.md)). Phase 2 (segment, embed, extract entities, link, evaluate) has an **approved design**, [docs/phase2-design.md](docs/phase2-design.md). Done: P2.0 (contracts, table groups), P2.1 (segmenter `seg-1`; vector store prototype → **Qdrant**). P2.2 code (`newsrag kb build`; the first snapshot `20261019` builds automatically after the dump download), P2.3 enricher (`enrich-1`: segments plus bge-m3 vectors in Qdrant, running under `run all`). Next: P2.4 (NER, coreference, linking, snippets). Services (Neo4j graph, Qdrant vectors) run from `deploy/compose.yml`.
 
 ## Layout
 
@@ -30,6 +30,7 @@ src/newsrag/
   extract/             component 4: extractor (pure functions, process pool)
   segment/             component 5: segmenter (title, paragraphs, sentences, passages)
   kb/                  local Wikidata subset: dump -> shards -> snapshot (entities, relations, aliases)
+  enrich/              enricher process: micro-batches -> segments table + Qdrant vectors; reconcile
   storage/             component 8: state DB, blob store, table files, recovery
   testing/             kill-test harness (shipped so `newsrag test kill` can run it)
   obs/                 component 13: stage events, lag reports
@@ -58,11 +59,14 @@ newsrag storage retention          # expire blobs, sweep orphans, prune poll log
 newsrag report lag --since 24h     # G1.3 lag percentiles, queue depth
 newsrag report disk                # G1.7 sizes and 12-month forecast
 newsrag kb build <dump.json.gz>    # Wikidata subset snapshot -> data/kb/<date>/
+newsrag run enricher               # segment + embed stored revisions into Qdrant until SIGTERM
+newsrag enrich status              # enrichment states, skip reasons, vector counts
+newsrag enrich reconcile [--repair]  # vector store vs done revisions (repair needs the enricher stopped)
 newsrag test kill                  # full-pipeline SIGKILL test (Gate 1, G1.4); --storage-only is faster
 newsrag run fetcher                # fetch pending frontier URLs until SIGTERM
 newsrag run writer                 # extract + store fetched pages until SIGTERM
 newsrag run poller                 # poll active feeds until SIGTERM
-newsrag run all                    # supervise poller + fetcher + writer
+newsrag run all                    # supervise poller + fetcher + writer + enricher
 newsrag feeds import               # load candidates_us.yaml into the DB (keeps statuses)
 newsrag feeds set-status active <feed-url>...
 newsrag feeds vet [--limit 50 --seed 1]   # vet feeds (resumable); --limit for a pilot

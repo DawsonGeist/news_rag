@@ -75,7 +75,13 @@ python -c "import torch; print(torch.cuda.get_device_name(), torch.cuda.get_devi
 # NVIDIA GeForce RTX 5060 Ti (12, 0)
 ```
 
-## 5. Docker: Neo4j (entity graph) and Qdrant (vector-store prototype)
+The enricher loads its embedding model from the local Hugging Face cache only and never downloads at runtime. Fetch the pinned revision once (`enrich.embedder.MODEL_REVISION`):
+
+```bash
+huggingface-cli download BAAI/bge-m3 --revision 5617a9f61b028005a4858fdac845db406aefb181
+```
+
+## 5. Docker: Neo4j (entity graph) and Qdrant (passage vectors)
 
 Install Docker Engine from Docker's own apt repository (see docs.docker.com, "Install Docker Engine on Ubuntu"), then `sudo usermod -aG docker "$USER"`, then **log in again or reboot**. Group changes only reach new sessions, and Ubuntu 26.04 ships neither `newgrp` nor `sg`. As a stop-gap until the next login, `sudo setfacl -m u:$USER:rw /var/run/docker.sock` grants access immediately; it resets when Docker restarts.
 
@@ -102,7 +108,7 @@ deploy/install-service.sh --start        # install, enable and start (re-run aft
 
 systemctl --user status newsrag          # running? recent log lines
 journalctl --user -u newsrag -f          # supervisor output
-tail -f ~/newsrag-data/logs/{supervisor,poller,fetcher,writer}.log
+tail -f ~/newsrag-data/logs/{supervisor,poller,fetcher,writer,enricher}.log
 systemctl --user stop newsrag            # graceful: the writer flushes before exit
 ```
 
@@ -112,7 +118,11 @@ Health checks while it runs:
 newsrag report lag --since 24h           # G1.3 lag percentiles, queue depth
 newsrag report disk                      # G1.7 sizes and 12-month forecast
 newsrag storage verify                   # storage invariants (add --deep to re-hash)
+newsrag enrich status                    # enricher backlog, skip reasons, vector counts
+newsrag enrich reconcile                 # vector store vs done revisions
 ```
+
+`run all` starts the enricher too (`[supervisor] components`), so Qdrant must be up and the model cached. Without them the enricher exits and the supervisor keeps retrying with backoff, while the rest of the pipeline runs normally.
 
 The service unit is `deploy/systemd/newsrag.service.in`, and the install script fills in this checkout's path. To run in the foreground instead, use `newsrag run all`.
 

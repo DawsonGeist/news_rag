@@ -119,8 +119,11 @@ Every fetched page gets a Document, including paywalled and non-article pages. F
    Moving the file in under the write lock serializes it with retention's unlinks. A crash after the rename but before `COMMIT` leaves an orphan file, and orphans don't exist by rule 3.
 3. **The manifest decides what exists:** a file not listed in the manifest does not exist. Cleanup:
    - **On startup:** delete the tmp areas whose lock is free (their process is dead). The storage writer also deletes table files with no `committed` row. Each component reclaims frontier rows in the states it owns. The fetcher reclaims `fetching` rows whose lease expired, at startup and every minute, because several fetchers may run. The writer reclaims **every** `extracting` row at startup, expired or not: it holds the single-writer lock, so any such row belongs to a dead predecessor.
+   - **The enricher** at startup deletes `enrichment` table files with no `committed` row and hands every `running` row of `enrichments` back to `pending` (or `failed` once it has used `enricher.max_attempts`).
    - **Daily, with retention:** delete blob files whose row is `expired` or missing. This walks all of `raw/`, so it doesn't run at startup.
 4. **Retention:** mark the row expired in a transaction first. Then unlink the file inside a write transaction that re-checks that the row is still not `present`.
+
+5. **Stores outside the manifest** (the vector store, later the graph store) hold derived data only, and every write to them must be **idempotent**: keyed by IDs derived from content (a point's ID is its `segment_id`), so re-running a batch overwrites rather than duplicates. Write them *before* the transaction that marks the work done, and record in SQLite what each one must hold (`enrichments.vectors`). SQLite is the oracle: at startup the enricher compares the store's point count with the `done` rows, and on a mismatch reconciles, re-queueing revisions with missing points and deleting points of revisions that aren't `done`. Only a revision's latest version is kept in the vector store.
 
 Never put the SQLite database or the Parquet tables on a network mount. Other machines reach the data through an API, or through copies of immutable segment files.
 
@@ -132,7 +135,7 @@ Every stage execution appends one `StageEvent`. The lag metrics are:
 - **ingest lag:** `searchable − discover.finished_at`
 - **end-to-end lag:** `searchable − published_at`
 
-"Searchable" means `store.finished_at` in Phase 1 and `index.finished_at` from Phase 2 on. Report p50, p95 and p99 per source and per stage.
+"Searchable" means `store.finished_at` in Phase 1 and `index.finished_at` from Phase 2 on. The enricher's `segment` event has `enqueued_at` = the revision's `ingested_at`, so its **index lag** (stored → searchable, G2.3) is `index.finished_at − segment.enqueued_at`; `report lag` computes it from `enrichments` for revisions stored inside the window. Report p50, p95 and p99 per source and per stage.
 
 ## Query API
 

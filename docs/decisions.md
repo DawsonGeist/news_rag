@@ -2,6 +2,19 @@
 
 Newest first. Each entry records what was decided, why, and what would reopen it.
 
+## 2026-10-23: P2.3 enricher
+
+| Decision | Choice | Why | Revisit if |
+| --- | --- | --- | --- |
+| Process | `newsrag run enricher`, a fourth child of `run all` (`supervisor.components`). Single writer of the `enrichment` table group (`enricher.lock`). | Phase 2 design: one GPU worker in micro-batches | The query service needs the GPU (Phase 3 yield protocol) |
+| Work discovery | Every `doc_revisions` row gets an `enrichments` row (incremental scan by rowid). Claims take up to 256 **newest-stored first**. | New articles jump the backfill queue, so index lag stays low while the archive backfills | — |
+| Scope | English `full_text` and `summary_only` revisions. Paywall teasers, non-articles and other languages are `skipped` with the reason, as is any revision older than the document's latest. | Open-access English content only; one live version per document | Multilingual search is wanted |
+| Pipeline version | `enrich-1` = `seg-1` passages + titles, **bge-m3** at a pinned revision (`5617a9f`, loaded from the local cache only), collection `passages_enrich_1`. A model change is a new version and a new collection. | Never mix vectors of two models; the embedder choice (bge-m3 vs Qwen3) is still open and a switch is a clean rebuild | The embedder evaluation picks another model |
+| Vector format | Qdrant: 1024-d **float16** originals on disk, int8 copies in RAM, payload indexes on `doc_id`, `source_id`, `level`, `published`, `revision`. The payload has the locator, not the text. | Halves the long-term disk cost (p2.1 finding 4); the text is already in the archive | Recall loss from float16 shows up in the eval |
+| Crash safety with Qdrant | Point ID = `segment_id`; upsert (`wait=True`) **before** the SQLite commit; `enrichments.vectors` records what Qdrant must hold; a startup count check triggers a full reconcile (re-queue missing, delete orphans). Re-queued revisions redo vectors only, keeping their committed segments. | Qdrant is outside the file-plus-manifest protocol; idempotent writes plus an oracle in SQLite cover crashes and lost unflushed writes | — |
+| Segments table | All levels (title, paragraph, sentence, passage) with text, one hot part per batch; `compact_derived` merges them into `tables/segments/merged/` hourly | 5 ms/doc to produce; about 40 rows/doc; sentence IDs are what P2.4 mentions point to | — |
+| Index lag | `report lag` adds stored → searchable and published → searchable for revisions stored in the window, plus the enricher's backlog | G2.3 | — |
+
 ## 2026-10-23: P2.2 knowledge base (Wikidata subset)
 
 | Decision | Choice | Why | Revisit if |

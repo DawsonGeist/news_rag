@@ -6,26 +6,35 @@
 -- tables on their next start (CREATE ... IF NOT EXISTS).
 
 -- Enrichment progress per Document revision and pipeline version. Owner: enricher.
--- Work discovery: doc_revisions rows with no 'done' row here for the current
--- pipeline_version. A new model or chunker is a new pipeline_version, so re-enrichment
--- is just more rows; old outputs stay until superseded. Leases make claims crash-safe,
--- as in the frontier.
+-- Work discovery: doc_revisions rows with no row here for the current pipeline_version
+-- (found by doc_revisions rowid, so the scan stays incremental). A new model or chunker
+-- is a new pipeline_version, so re-enrichment is just more rows; old outputs stay until
+-- superseded. Leases make claims crash-safe, as in the frontier.
+--   pending:  queued          running: claimed by the enricher (lease)
+--   done:     segments committed, vectors in the vector store
+--   skipped:  deliberately not enriched (not an English article, or a newer revision exists)
+--   failed:   gave up after enricher.max_attempts
 CREATE TABLE IF NOT EXISTS enrichments (
     doc_id           TEXT NOT NULL,
     revision         INTEGER NOT NULL,
     pipeline_version TEXT NOT NULL,
-    state            TEXT NOT NULL CHECK (state IN ('pending', 'running', 'done', 'failed')),
+    state            TEXT NOT NULL
+                     CHECK (state IN ('pending', 'running', 'done', 'skipped', 'failed')),
     attempts         INTEGER NOT NULL DEFAULT 0,
     lease_owner      TEXT,
     lease_expires_at TEXT,
     last_error       TEXT,
+    ingested_at      TEXT NOT NULL,     -- the revision's doc_revisions.ingested_at ("stored")
     queued_at        TEXT NOT NULL,     -- when the revision became known to the enricher
     started_at       TEXT,
     finished_at      TEXT,
+    segments         INTEGER,           -- rows written to the segments table
+    vectors          INTEGER,           -- points written to the vector store (reconcile oracle)
     updated_at       TEXT NOT NULL,
     PRIMARY KEY (doc_id, revision, pipeline_version)
 ) STRICT;
-CREATE INDEX IF NOT EXISTS enrichments_ready ON enrichments (pipeline_version, state, queued_at);
+-- Newest first: fresh articles jump the backfill queue (index lag, G2.3).
+CREATE INDEX IF NOT EXISTS enrichments_ready ON enrichments (pipeline_version, state, ingested_at);
 CREATE INDEX IF NOT EXISTS enrichments_lease ON enrichments (state, lease_expires_at);
 
 -- Manual entity-link corrections. Owner: entity linker; rows are written only by a

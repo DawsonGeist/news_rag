@@ -94,6 +94,28 @@ class VetSettings(_Section):
     review_median_words: int = 150  # review below
 
 
+class EnricherSettings(_Section):
+    """The Phase 2 enricher (phase2-design.md, "Process model")."""
+
+    batch_docs: int = 256  # revisions per micro-batch: ~1,200 passages, ~10 s on the GPU
+    poll_s: float = 5.0  # idle wait between looks for new revisions
+    lease_s: float = 900.0
+    max_attempts: int = 3
+    device: str = "cuda"
+    embed_batch: int = 64
+    qdrant_url: str = "http://127.0.0.1:6333"
+    qdrant_wait_s: float = 120.0  # at startup, e.g. after a reboot while Docker starts
+    compact_interval_s: float = 3600.0
+    compact_target_mb: int = 128
+
+
+class SupervisorSettings(_Section):
+    # `newsrag run all` children. The enricher needs the GPU stack and Qdrant.
+    components: list[str] = Field(
+        default_factory=lambda: ["poller", "fetcher", "writer", "enricher"]
+    )
+
+
 class RetentionSettings(_Section):
     raw_days: int = 60
     stage_event_days: int = 30
@@ -111,6 +133,8 @@ class Settings(_Section):
     writer: WriterSettings = WriterSettings()
     retention: RetentionSettings = RetentionSettings()
     vet: VetSettings = VetSettings()
+    enricher: EnricherSettings = EnricherSettings()
+    supervisor: SupervisorSettings = SupervisorSettings()
 
     @field_validator("data_dir")
     @classmethod

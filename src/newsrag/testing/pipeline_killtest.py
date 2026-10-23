@@ -63,6 +63,10 @@ flush_seconds = 0.5
 extract_workers = 2
 compact_interval_s = 1.0
 compact_target_mb = 1
+
+[supervisor]
+# Not the enricher yet: it would write into the real vector store (G2.4 adds it, P2.6).
+components = ["poller", "fetcher", "writer"]
 """
 
 

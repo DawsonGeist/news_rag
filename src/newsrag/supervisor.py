@@ -1,5 +1,6 @@
-"""``newsrag run all``: run the poller, fetcher and writer as child processes and keep
-them running (Gate 1, G1.2: 72 h unattended).
+"""``newsrag run all``: run the pipeline processes (``supervisor.components``: poller,
+fetcher, writer and enricher by default) as child processes and keep them running
+(Gate 1, G1.2: 72 h unattended).
 
 - A child that exits for any reason other than shutdown is restarted after a backoff
   that doubles with each crash in the last ten minutes (1 s up to 60 s).
@@ -31,7 +32,6 @@ from newsrag.storage.fsio import ProcessLock, sweep_tmp
 
 log = logging.getLogger("newsrag.supervisor")
 
-COMPONENTS = ("poller", "fetcher", "writer")
 # One-shot jobs: (name, CLI args, first run after s, then every s).
 JOBS = (
     ("retention", ("storage", "retention"), 600.0, 86400.0),
@@ -65,12 +65,13 @@ class Supervisor:
     def __init__(
         self,
         settings: Settings,
-        components: tuple[str, ...] = COMPONENTS,
+        components: tuple[str, ...] | None = None,
         jobs: tuple[tuple[str, tuple[str, ...], float, float], ...] = JOBS,
     ) -> None:
         self.s = settings
         self.logs = settings.data_dir / "logs"
-        self.children = [Child(name) for name in components]
+        names = components if components is not None else tuple(settings.supervisor.components)
+        self.children = [Child(name) for name in names]
         self.stopping = threading.Event()
         self.jobs = jobs
         self.job_due: dict[str, float] = {}

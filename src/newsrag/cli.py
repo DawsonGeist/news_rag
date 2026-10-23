@@ -30,6 +30,8 @@ report_app = typer.Typer(no_args_is_help=True, help="Lag and disk reports.")
 app.add_typer(report_app, name="report")
 kb_app = typer.Typer(no_args_is_help=True, help="Local Wikidata subset (knowledge base).")
 app.add_typer(kb_app, name="kb")
+enrich_app = typer.Typer(no_args_is_help=True, help="Enricher state and vector store checks.")
+app.add_typer(enrich_app, name="enrich")
 
 SCHEMAS_DIR = REPO_ROOT / "contracts" / "v1" / "schemas"
 FEEDS_DIR = REPO_ROOT / "feeds"
@@ -428,6 +430,75 @@ def kb_build(
     typer.echo(f"snapshot {snap}: {counts} in {(time.monotonic() - t0) / 60:.0f} min")
 
 
+@enrich_app.command("status")
+def enrich_status() -> None:
+    """Revisions per enrichment state, the backlog, and the vector store's point count."""
+    from newsrag.enrich.enricher import COLLECTION, PIPELINE_VERSION
+    from newsrag.enrich.state import expected_total
+    from newsrag.storage.state import connect, init_schema
+
+    settings = load_settings()
+    conn = connect(settings.state_db)
+    init_schema(conn)
+    states = dict(
+        conn.execute(
+            "SELECT state, count(*) FROM enrichments WHERE pipeline_version = ? GROUP BY 1",
+            (PIPELINE_VERSION,),
+        ).fetchall()
+    )
+    total = conn.execute("SELECT count(*) FROM doc_revisions").fetchone()[0]
+    typer.echo(f"{PIPELINE_VERSION}: {states} of {total} stored revisions")
+    reasons = conn.execute(
+        "SELECT last_error, count(*) FROM enrichments WHERE pipeline_version = ? "
+        "AND state IN ('skipped', 'failed') GROUP BY 1 ORDER BY 2 DESC LIMIT 10",
+        (PIPELINE_VERSION,),
+    ).fetchall()
+    for reason, n in reasons:
+        typer.echo(f"  {n:>8}  {reason}")
+    typer.echo(f"vectors expected: {expected_total(conn, PIPELINE_VERSION)}")
+    try:
+        from newsrag.enrich.embedder import DIMS
+        from newsrag.enrich.vectors import VectorIndex
+
+        index = VectorIndex.connect(settings.enricher.qdrant_url, COLLECTION, DIMS)
+        typer.echo(f"vectors in {COLLECTION}: {index.count()}")
+    except Exception as e:
+        typer.echo(f"vector store unavailable: {e}")
+    conn.close()
+
+
+@enrich_app.command("reconcile")
+def enrich_reconcile(
+    repair: bool = typer.Option(
+        False, help="Re-queue missing vectors and delete orphans (stops if the enricher runs)."
+    ),
+) -> None:
+    """Compare the vector store with the done revisions (G2.4's oracle)."""
+    from contextlib import nullcontext
+
+    from newsrag.enrich.embedder import DIMS
+    from newsrag.enrich.enricher import COLLECTION, ENRICHER_LOCK, reconcile
+    from newsrag.enrich.vectors import VectorIndex
+    from newsrag.storage.fsio import ProcessLock
+    from newsrag.storage.state import connect
+    from newsrag.timeutil import utcnow
+
+    settings = load_settings()
+    conn = connect(settings.state_db)
+    index = VectorIndex.connect(settings.enricher.qdrant_url, COLLECTION, DIMS)
+    # Repair needs the enricher stopped: its in-flight batch looks like orphans.
+    with ProcessLock(settings.locks_dir / ENRICHER_LOCK) if repair else nullcontext():
+        r = reconcile(conn, index, repair, utcnow())
+    typer.echo(
+        f"points: expected {r.expected_points}, found {r.actual_points}; "
+        f"mismatched revisions {len(r.mismatched)}, orphaned {len(r.orphaned)}"
+        + (" (repaired)" if r.repaired else "")
+    )
+    conn.close()
+    if not r.ok and not repair:
+        raise typer.Exit(1)
+
+
 @test_app.command("kill")
 def test_kill(
     iterations: int = typer.Option(20),
@@ -547,6 +618,29 @@ def run_writer_cmd() -> None:
     for sig in (signal.SIGTERM, signal.SIGINT):
         signal.signal(sig, lambda *_: stop.set())
     run_writer(settings, conn, stop)
+    conn.close()
+
+
+@run_app.command("enricher")
+def run_enricher_cmd() -> None:
+    """Segment and embed stored revisions in micro-batches until SIGTERM/SIGINT."""
+    import logging
+    import signal
+    import threading
+
+    from newsrag.enrich.enricher import run_enricher
+    from newsrag.storage.state import connect, init_schema
+
+    _setup_logging()
+    # One line per Qdrant request would bury the per-batch summaries.
+    logging.getLogger("httpx").setLevel(logging.WARNING)
+    settings = load_settings()
+    conn = connect(settings.state_db)
+    init_schema(conn)
+    stop = threading.Event()
+    for sig in (signal.SIGTERM, signal.SIGINT):
+        signal.signal(sig, lambda *_: stop.set())
+    run_enricher(settings, conn, stop)
     conn.close()
 
 

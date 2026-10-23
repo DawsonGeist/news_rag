@@ -9,22 +9,32 @@ Lag definitions (contracts/v1/README.md, "Stage events"), per URL:
 "Searchable" is ``store.finished_at`` in Phase 1. A ``store`` with status ``skipped``
 (unchanged content) counts: the content is searchable. Only URLs stored inside the
 window are counted.
+
+From Phase 2, "searchable" means in the vector store (G2.3), per revision:
+
+- index lag: enricher finished - revision stored (``ingested_at``)
+- published to searchable: enricher finished - ``published_at``
+
+Only revisions stored inside the window count, so a backfill of older revisions
+doesn't swamp the numbers; the enricher's backlog is reported beside them.
 """
 
 from __future__ import annotations
 
 import math
+import os
 import shutil
 import sqlite3
 from collections import defaultdict
 from collections.abc import Sequence
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta
+from pathlib import Path
 
 from newsrag.config import Settings
 from newsrag.timeutil import from_db, to_db
 
-STAGES = ("discover", "fetch", "extract", "store")
+STAGES = ("discover", "fetch", "extract", "store", "segment", "embed", "index")
 
 
 def percentile(values: Sequence[float], q: float) -> float | None:
@@ -67,6 +77,10 @@ class LagReport:
     queue: dict[str, int] = field(default_factory=dict)
     oldest_pending_s: float | None = None
     feeds: dict[str, int] = field(default_factory=dict)
+    index: Dist = field(default_factory=Dist)
+    published_to_searchable: Dist = field(default_factory=Dist)
+    enrich_queue: dict[str, int] = field(default_factory=dict)
+    oldest_unenriched_s: float | None = None  # oldest pending revision, since stored
 
 
 def lag_report(
@@ -132,6 +146,32 @@ def lag_report(
     ).fetchone()[0]
     report.oldest_pending_s = (now - from_db(oldest)).total_seconds() if oldest else None
     report.feeds = dict(conn.execute("SELECT status, count(*) FROM feeds GROUP BY status"))
+
+    done = conn.execute(
+        "SELECT e.ingested_at, e.finished_at, r.published_at FROM enrichments e "
+        "JOIN doc_revisions r USING (doc_id, revision) "
+        "WHERE e.state = 'done' AND e.ingested_at >= ?",
+        (to_db(start),),
+    ).fetchall()
+    index_lag = [
+        (from_db(d["finished_at"]) - from_db(d["ingested_at"])).total_seconds() for d in done
+    ]
+    searchable = [
+        (from_db(d["finished_at"]) - from_db(d["published_at"])).total_seconds()
+        for d in done
+        if d["published_at"]
+    ]
+    report.index = Dist.of(index_lag)
+    report.published_to_searchable = Dist.of(searchable)
+    report.enrich_queue = dict(
+        conn.execute("SELECT state, count(*) FROM enrichments GROUP BY state").fetchall()
+    )
+    oldest_enrich = conn.execute(
+        "SELECT min(ingested_at) FROM enrichments WHERE state IN ('pending', 'running')"
+    ).fetchone()[0]
+    report.oldest_unenriched_s = (
+        (now - from_db(oldest_enrich)).total_seconds() if oldest_enrich else None
+    )
     return report
 
 
@@ -159,6 +199,18 @@ def format_lag(r: LagReport) -> str:
             )
         if g.negative_discovery:
             out.append(f"    ({g.negative_discovery} published after discovery: misdated)")
+    out.append("searchable (Phase 2, revisions stored in the window)")
+    for label, d in (
+        ("index", r.index),
+        ("pub->search", r.published_to_searchable),
+    ):
+        out.append(
+            f"    {label:<11} {_fmt_s(d.p50):>7} {_fmt_s(d.p95):>7} {_fmt_s(d.p99):>7}  n={d.n}"
+        )
+    out.append(
+        f"    enricher {r.enrich_queue}; oldest unenriched revision stored "
+        f"{_fmt_s(r.oldest_unenriched_s)} ago"
+    )
     out.append("stages (queue p50/p95, work p50/p95; statuses)")
     for stage, timings in r.stages.items():
         q, w = timings["queue"], timings["work"]
@@ -188,6 +240,9 @@ class DiskReport:
     parquet_bytes_per_day: float
     sqlite_bytes_per_doc: float
     docs_per_day: float
+    derived_bytes: int  # the enricher's Parquet tables (part of parquet_bytes)
+    vector_bytes: int  # the vector store's data directory
+    derived_bytes_per_doc: float  # both, per revision the enricher has processed
     forecast_12mo: int
     fits_12mo: bool
     # Under a day of data, rates are noise and fixed SQLite overhead reads as growth.
@@ -198,7 +253,8 @@ def disk_report(conn: sqlite3.Connection, settings: Settings, now: datetime) -> 
     """Current usage and a 12-month forecast (G1.7) from the last 7 days' rate.
 
     Raw blobs plateau at ``retention.raw_days`` of intake; extracted text (Parquet) and
-    the SQLite state grow linearly. Phase 2 vectors are not included yet.
+    the SQLite state grow linearly. So do the enricher's outputs (derived Parquet and
+    vectors), forecast per stored revision from what it has processed so far.
     """
     blob_bytes, blob_count = conn.execute(
         "SELECT coalesce(sum(size_stored), 0), count(*) FROM blobs WHERE state = 'present'"
@@ -223,16 +279,29 @@ def disk_report(conn: sqlite3.Connection, settings: Settings, now: datetime) -> 
     ).fetchone()[0]
     blob_rate = recent_blobs / days
     docs_rate = recent_docs / days
-    bytes_per_row = parquet_bytes / parquet_rows if parquet_rows else 0.0
+    doc_bytes, doc_rows = conn.execute(
+        "SELECT coalesce(sum(size_bytes), 0), coalesce(sum(row_count), 0) FROM table_files "
+        "WHERE state = 'committed' AND table_name = 'documents'"
+    ).fetchone()
+    bytes_per_row = doc_bytes / doc_rows if doc_rows else 0.0
     parquet_rate = docs_rate * bytes_per_row
+    derived_bytes = parquet_bytes - doc_bytes
+    vector_bytes = _dir_bytes(settings.data_dir / "services" / "qdrant")
+    processed = conn.execute(
+        "SELECT count(*) FROM enrichments WHERE state IN ('done', 'skipped')"
+    ).fetchone()[0]
+    derived_per_doc = (derived_bytes + vector_bytes) / processed if processed else 0.0
     total_docs = conn.execute("SELECT count(*) FROM doc_revisions").fetchone()[0]
     sqlite_per_doc = sqlite_bytes / total_docs if total_docs else 0.0
 
     blobs_12mo = blob_rate * settings.retention.raw_days
     parquet_12mo = parquet_bytes + parquet_rate * 365
     sqlite_12mo = sqlite_bytes + sqlite_per_doc * docs_rate * 365
-    forecast = int(blobs_12mo + parquet_12mo + sqlite_12mo)
-    ours_now = blob_bytes + parquet_bytes + sqlite_bytes
+    # Not-yet-enriched revisions count too: the backlog will be enriched within the year.
+    unprocessed = total_docs - processed
+    derived_12mo = derived_bytes + vector_bytes + derived_per_doc * (unprocessed + docs_rate * 365)
+    forecast = int(blobs_12mo + parquet_12mo + sqlite_12mo + derived_12mo - derived_bytes)
+    ours_now = blob_bytes + parquet_bytes + sqlite_bytes + vector_bytes
     return DiskReport(
         blob_bytes=blob_bytes,
         blob_count=blob_count,
@@ -246,10 +315,26 @@ def disk_report(conn: sqlite3.Connection, settings: Settings, now: datetime) -> 
         parquet_bytes_per_day=parquet_rate,
         sqlite_bytes_per_doc=sqlite_per_doc,
         docs_per_day=docs_rate,
+        derived_bytes=derived_bytes,
+        vector_bytes=vector_bytes,
+        derived_bytes_per_doc=derived_per_doc,
         forecast_12mo=forecast,
         fits_12mo=forecast < usage.free + ours_now,
         rough=days < 1,
     )
+
+
+def _dir_bytes(root: Path) -> int:
+    """Allocated size of a directory tree; parts we may not read (a container's files)
+    are skipped rather than failing the report."""
+    total = 0
+    for dirpath, _dirs, files in os.walk(root, onerror=lambda _e: None):
+        for name in files:
+            try:
+                total += os.lstat(os.path.join(dirpath, name)).st_blocks * 512
+            except OSError:
+                continue
+    return total
 
 
 def _gb(b: float) -> str:
@@ -260,13 +345,16 @@ def format_disk(r: DiskReport) -> str:
     return "\n".join(
         [
             f"raw blobs   {_gb(r.blob_bytes):>11}  ({r.blob_count} present)",
-            f"parquet     {_gb(r.parquet_bytes):>11}  ({r.parquet_rows} rows)",
+            f"parquet     {_gb(r.parquet_bytes):>11}  ({r.parquet_rows} rows; "
+            f"{_gb(r.derived_bytes)} derived)",
+            f"vectors     {_gb(r.vector_bytes):>11}  "
+            f"({r.derived_bytes_per_doc / 1e3:.1f} KB derived+vectors per revision)",
             f"sqlite      {_gb(r.sqlite_bytes):>11}",
             f"filesystem  {_gb(r.fs_free):>11} free of {_gb(r.fs_total)}",
             f"rate over {r.window_days} days: {r.docs_per_day:.0f} docs/day, "
             f"blobs {_gb(r.blob_bytes_per_day)}/day, parquet {_gb(r.parquet_bytes_per_day)}/day",
             f"12-month forecast {_gb(r.forecast_12mo)} "
-            f"(blobs plateau at retention; text and state grow): "
+            f"(blobs plateau at retention; text, derived data and state grow): "
             f"{'FITS' if r.fits_12mo else 'DOES NOT FIT'} (G1.7)"
             + (" -- ROUGH: under a day of data" if r.rough else ""),
         ]

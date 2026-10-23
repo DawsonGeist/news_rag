@@ -199,3 +199,47 @@ def read_documents(paths: Sequence[Path]) -> list[Document]:
     for p in paths:
         docs.extend(table_to_documents(pq.read_table(p, schema=DOCUMENT_SCHEMA)))
     return docs
+
+
+def read_revisions(
+    conn: sqlite3.Connection,
+    data_dir: Path,
+    keys: Sequence[tuple[str, int]],
+    attempts: int = 3,
+) -> dict[tuple[str, int], Document]:
+    """Read specific Document revisions through the manifest (``doc_revisions.file_id``).
+
+    The storage writer may compact the part holding a revision between the lookup and
+    the read; the old file is then gone, so the lookup is simply redone. Revisions
+    the ledger doesn't know are absent from the result.
+    """
+    wanted = set(keys)
+    for attempt in range(attempts):
+        by_file: dict[str, set[str]] = {}
+        ordered = sorted(wanted)
+        for i in range(0, len(ordered), 400):
+            chunk = ordered[i : i + 400]
+            rows = conn.execute(
+                "SELECT d.doc_id, t.rel_path FROM doc_revisions d "
+                "JOIN table_files t USING (file_id) "
+                f"WHERE (d.doc_id, d.revision) IN (VALUES {','.join(['(?, ?)'] * len(chunk))})",
+                [v for key in chunk for v in key],
+            )
+            for r in rows:
+                by_file.setdefault(r["rel_path"], set()).add(r["doc_id"])
+        out: dict[tuple[str, int], Document] = {}
+        try:
+            for rel, doc_ids in by_file.items():
+                table = pq.read_table(
+                    data_dir / rel,
+                    schema=DOCUMENT_SCHEMA,
+                    filters=[("doc_id", "in", sorted(doc_ids))],
+                )
+                for d in table_to_documents(table):
+                    if (d.doc_id, d.revision) in wanted:
+                        out[(d.doc_id, d.revision)] = d
+            return out
+        except FileNotFoundError:
+            if attempt == attempts - 1:
+                raise
+    return {}
