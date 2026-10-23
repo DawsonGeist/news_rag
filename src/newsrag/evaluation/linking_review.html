@@ -37,7 +37,7 @@ function render() {
   ITEMS.forEach((it, i) => {
     const chosen = state[it.key]; if (chosen) done++;
     const card = document.createElement("div"); card.className = "card" + (chosen ? " done" : "");
-    const opts = it.candidates.map(c => ({v: c.entity_id, t: `<b>${esc(c.label)}</b> <span class="desc">— ${esc(c.description || "")} · ${c.type} · ${c.sitelinks} sitelinks · score ${c.confidence}</span> <a href="https://www.wikidata.org/wiki/${c.entity_id.slice(3)}" target="_blank" rel="noopener">${c.entity_id.slice(3)}</a>`}));
+    const opts = it.candidates.map(c => ({v: c.entity_id, t: `<b>${esc(c.label)}</b> <span class="desc">— ${esc(c.description || "")} · ${c.type} · ${c.sitelinks} sitelinks${c.confidence == null ? "" : " · score " + c.confidence}</span> <a href="https://www.wikidata.org/wiki/${c.entity_id.slice(3)}" target="_blank" rel="noopener">${c.entity_id.slice(3)}</a>`}));
     opts.push({v: "none", t: "<b>Not in Wikidata</b> <span class='desc'>(or none of these and no Wikidata page)</span>"});
     opts.push({v: "ner_error", t: "<b>Not a name / wrong span</b>"});
     const cur = chosen || it.proposed;

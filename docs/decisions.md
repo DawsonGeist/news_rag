@@ -2,6 +2,18 @@
 
 Newest first. Each entry records what was decided, why, and what would reopen it.
 
+## 2026-10-23: P2.4 entities (in progress)
+
+| Decision | Choice | Why | Revisit if |
+| --- | --- | --- | --- |
+| KB typing (`kb-3`) | Root-class priority person → **location** → organization → law → **product** → event. News outlets (newspaper, magazine, news agency, broadcaster, TV/radio station) are organization roots. Aliases from `en` **and** `mul`. | The first full build typed cities as organizations (Wikidata files municipalities under organization too), newspapers as `other`, TikTok as an event (service → process → occurrence), and missed acronyms such as "EU" (Wikidata moved language-neutral aliases to `mul`) | Linking errors traced to types |
+| KB lookup index | `kb.duckdb` per snapshot (ART indexes on alias, entity, relation ends), about 9 GB, built in 2 min; opened read-only by the linker | Point lookups for every micro-batch; the Parquet snapshot is for bulk work | — |
+| NER | **GLiNER large v2.1** (fp16, about 240 passages/s), on passages and titles, with name rules: per-label thresholds (0.5 people, organizations and places; 0.7 others), must contain an uppercase letter, no pronouns, honorifics cut from person spans | Clearly better types than spaCy `en_core_web_lg` on archive samples (spaCy called a director an organization and a company a person); spaCy's transformer model can't install beside transformers 5 | The linking test set shows NER is the bottleneck |
+| Coreference | **fastcoref** (F-Coref) 2.1.6 with a one-line transformers 5 shim; articles over 2,000 words split at paragraphs | Good clusters on archive samples ("Kevin Finley … him … his", "Zero Motorcycles … The company … its"); maverick-coref would downgrade protobuf and pin nltk | It breaks on a dependency update |
+| Linker | **Not ReFinED** (not installable on Python 3.14 / transformers 5): our own scorer over alias-index candidates, with popularity, type agreement, label match, bge-m3 context similarity (passage vs "label: description") and KB coherence, combined by logistic weights **fitted on the linking test set** | Local, explainable features; the features the design listed | Precision under 0.9 after fitting |
+| Snippets at rest | `Snippet.text` is optional and empty when stored; the locator gives the text | Snippets would otherwise copy most of the archive again (about 22 KB/doc, over 100 GB/yr) | — |
+| Entity queue | A second queue in the enricher, gated on the revision's vectors, with version `ents-1/link-1+<snapshot>.<kb_version>`; entity IDs tagged on the revision's Qdrant points (`entities` payload, indexed) and kept in `enrichments.entity_ids`, so re-written vectors keep them. **Off by default** until the linker is fitted. | A new KB or linker re-links without re-embedding; the archive is backfilled once, with calibrated weights | — |
+
 ## 2026-10-23: P2.3 enricher
 
 | Decision | Choice | Why | Revisit if |
