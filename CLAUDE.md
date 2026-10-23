@@ -14,7 +14,7 @@ A local-first search engine over news and long-form content. It finds articles b
 
 ## Status
 
-Phase 1 (vet, poll, fetch, extract, store) is **complete**: it runs as a systemd user service and passes all 7 Gate 1 criteria ([docs/gate1-review.md](docs/gate1-review.md)). Phase 2 (segment, embed, extract entities, link, evaluate) has an **approved design**, [docs/phase2-design.md](docs/phase2-design.md); build starts at P2.0. The graph store is Neo4j; the vector store is chosen by the P2.1 prototype.
+Phase 1 (vet, poll, fetch, extract, store) is **complete**: it runs as a systemd user service and passes all 7 Gate 1 criteria ([docs/gate1-review.md](docs/gate1-review.md)). Phase 2 (segment, embed, extract entities, link, evaluate) has an **approved design**, [docs/phase2-design.md](docs/phase2-design.md). Done: P2.0 (contracts, table groups), P2.1 (segmenter `seg-1`; vector store prototype → **Qdrant**). Next: P2.2 (local Wikidata subset). Services (Neo4j graph, Qdrant vectors) run from `deploy/compose.yml`.
 
 ## Layout
 
@@ -28,6 +28,7 @@ src/newsrag/
   feeds/               component 1: feed vetter
   crawl/               components 2-3: poller, fetcher
   extract/             component 4: extractor (pure functions, process pool)
+  segment/             component 5: segmenter (title, paragraphs, sentences, passages)
   storage/             component 8: state DB, blob store, table files, recovery
   testing/             kill-test harness (shipped so `newsrag test kill` can run it)
   obs/                 component 13: stage events, lag reports

@@ -76,7 +76,7 @@ Read first: [vision.md](vision.md) (what the author wants), [decisions.md](decis
 
   Both fit the 2 TB disk for many years, unlike the paragraph-level estimate of 177 to 355 GB/yr. `report disk` adds vectors to its forecast.
 
-## Vector store: the prototype decides (P2.1)
+## Vector store: Qdrant (decided 2026-10-23 after the P2.1 prototype, see p2.1-vector-store.md)
 
 What it must do: kNN over passages, **filtered** by entity (passages in documents that mention entity X) and by date range. The overview names filtered search as the deciding factor. It must also add vectors continuously with the micro-batches, and survive power loss, recovering to a consistent state.
 
