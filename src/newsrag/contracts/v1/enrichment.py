@@ -198,8 +198,12 @@ class StanceLabel(StrEnum):
 
 
 class Snippet(ContractModel):
-    """N words either side of a resolved mention: the unit stance is judged on, and the join
-    point between the entity map and the vector index."""
+    """The sentences around a resolved mention: the unit stance is judged on, and the join
+    point between the entity map and the vector index.
+
+    At rest ``text`` is None: it is always ``extracted_text[locator]`` (or the title), and
+    storing it would copy most of the archive again. It is filled when a snippet is handed
+    to a consumer such as the stance model."""
 
     schema_version: SchemaVersion = SCHEMA_VERSION
     snippet_id: Hex32
@@ -207,7 +211,7 @@ class Snippet(ContractModel):
     revision: int = Field(ge=1)
     entity_id: str
     mention_id: Hex32
-    text: str
+    text: str | None = None
     locator: TextLocator
     window_words: int = Field(gt=0)
     stance_score: float | None = Field(default=None, ge=-1.0, le=1.0)

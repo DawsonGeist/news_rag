@@ -14,6 +14,9 @@ DDL_PACKAGE = "newsrag.contracts.v1"
 # Applied in order on every start; every statement is CREATE ... IF NOT EXISTS, so an
 # existing database gains tables added in later phases without a migration step.
 DDL_FILES = ("sql/crawl_state.sql", "sql/enrichment_state.sql")
+# Columns added to provisional tables after databases already had them (CREATE TABLE IF
+# NOT EXISTS won't add a column). Additive only: (table, column, declaration).
+ADDED_COLUMNS = (("enrichments", "entity_ids", "TEXT"),)
 
 
 def ddl() -> str:
@@ -57,6 +60,10 @@ def transaction(conn: sqlite3.Connection) -> Iterator[sqlite3.Connection]:
 def init_schema(conn: sqlite3.Connection) -> None:
     """Create all tables if missing. Idempotent."""
     conn.executescript(ddl())
+    for table, column, decl in ADDED_COLUMNS:
+        have = {r[1] for r in conn.execute(f"PRAGMA table_info({table})")}
+        if column not in have:
+            conn.execute(f"ALTER TABLE {table} ADD COLUMN {column} {decl}")
     conn.execute(
         "INSERT INTO schema_meta (key, value) VALUES ('schema_version', ?) "
         "ON CONFLICT (key) DO NOTHING",

@@ -23,6 +23,7 @@ Only English articles (full text or summary) are enriched; everything else is
 
 from __future__ import annotations
 
+import json
 import logging
 import sqlite3
 import threading
@@ -88,7 +89,7 @@ def ineligible_reason(doc: Document) -> str | None:
     return None
 
 
-def payload(doc: Document, seg: Segment) -> dict[str, Any]:
+def payload(doc: Document, seg: Segment, entities: list[str] | None = None) -> dict[str, Any]:
     """What a search hit carries: enough to filter (source, date, level) and to fetch the
     text from the archive by locator, without storing the text twice."""
     loc = seg.locator
@@ -108,6 +109,8 @@ def payload(doc: Document, seg: Segment) -> dict[str, Any]:
     }
     if doc.published_at is not None:
         out["published"] = int(doc.published_at.timestamp())
+    if entities is not None:
+        out["entities"] = entities
     return out
 
 
@@ -160,6 +163,10 @@ class Enricher:
         self.worker = worker
         self.watermark = 0  # doc_revisions rowid; 0 = scan everything once
         self.last_compaction = time.monotonic()
+        # The entity queue (link.lane.EntityLane), when a KB is available. Its results
+        # are copied into the payload of points written here, so a revision's points
+        # carry its entities whichever queue finishes first.
+        self.entity_lane: Any = None
 
     # --- one micro-batch ---------------------------------------------------------------
 
@@ -191,10 +198,25 @@ class Enricher:
             out.update({r["doc_id"]: r["rev"] for r in rows})
         return out
 
+    def _known_entities(self, claims: list[EnrichClaim]) -> dict[tuple[str, int], list[str]]:
+        if self.entity_lane is None:
+            return {}
+        out = {}
+        for c in claims:
+            row = self.conn.execute(
+                "SELECT entity_ids FROM enrichments WHERE doc_id = ? AND revision = ? "
+                "AND pipeline_version = ? AND state = 'done'",
+                (c.doc_id, c.revision, self.entity_lane.pipeline_version),
+            ).fetchone()
+            if row is not None and row["entity_ids"] is not None:
+                out[(c.doc_id, c.revision)] = json.loads(row["entity_ids"])
+        return out
+
     def process(self, claims: list[EnrichClaim]) -> BatchReport:
         t_start = utcnow()
         docs = read_revisions(self.conn, self.s.data_dir, [(c.doc_id, c.revision) for c in claims])
         latest = self._latest_revisions({c.doc_id for c in claims})
+        known_entities = self._known_entities(claims)
         outcomes: list[_Outcome] = []
         to_write: list[Segment] = []
         points: list[Point] = []
@@ -225,7 +247,8 @@ class Enricher:
             embed = [s for s in segs if s.level in EMBED_LEVELS]
             if not c.segments_committed:
                 to_write.extend(segs)
-            points.extend(Point(s.segment_id, payload(doc, s)) for s in embed)
+            ents = known_entities.get((c.doc_id, c.revision))
+            points.extend(Point(s.segment_id, payload(doc, s, ents)) for s in embed)
             texts.extend(s.text for s in embed)
             outcomes.append(_Outcome(c, "done", segments=len(segs), vectors=len(embed)))
         t_segmented = utcnow()
@@ -358,18 +381,22 @@ class Enricher:
     def maybe_compact(self) -> None:
         if time.monotonic() - self.last_compaction < self.s.enricher.compact_interval_s:
             return
-        report = compact_derived(
-            self.conn,
-            self.s.data_dir,
-            self.tmp,
-            SEGMENTS,
-            SEGMENT_SCHEMA,
-            utcnow(),
-            self.s.enricher.compact_target_mb * 1024 * 1024,
-        )
+        from newsrag.link.tables import SCHEMAS
+
+        tables = {SEGMENTS: SEGMENT_SCHEMA, **{n: sch for n, (sch, _) in SCHEMAS.items()}}
+        for name, schema in tables.items():
+            report = compact_derived(
+                self.conn,
+                self.s.data_dir,
+                self.tmp,
+                name,
+                schema,
+                utcnow(),
+                self.s.enricher.compact_target_mb * 1024 * 1024,
+            )
+            if report.inputs:
+                log.info("compaction of %s: %s", name, report)
         self.last_compaction = time.monotonic()
-        if report.inputs:
-            log.info("compaction of %s: %s", SEGMENTS, report)
 
     def check_vectors(self) -> ReconcileReport | None:
         """Cheap startup check: a full reconcile only if the point count is off."""
@@ -386,24 +413,42 @@ class Enricher:
         )
         return report
 
+    def step_all(self) -> int:
+        """One batch of each queue, vectors first (they gate search freshness)."""
+        claimed = 0
+        report = self.step()
+        if report.claimed:
+            log.info(
+                "vectors: %d revisions %s, %d vectors, %s",
+                report.claimed,
+                report.states,
+                report.vectors,
+                {k: round(v, 1) for k, v in report.seconds.items()},
+            )
+        claimed += report.claimed
+        if self.entity_lane is not None:
+            er = self.entity_lane.step()
+            if er.claimed:
+                log.info(
+                    "entities: %d revisions %s, %d mentions, %s",
+                    er.claimed,
+                    er.states,
+                    er.vectors,
+                    {k: round(v, 1) for k, v in er.seconds.items()},
+                )
+            claimed += er.claimed
+        return claimed
+
     def run(self, stop: threading.Event) -> None:
         while not stop.is_set():
-            report = self.step()
-            if report.claimed:
-                log.info(
-                    "batch: %d revisions %s, %d vectors, %s",
-                    report.claimed,
-                    report.states,
-                    report.vectors,
-                    {k: round(v, 1) for k, v in report.seconds.items()},
-                )
+            claimed = self.step_all()
             self.maybe_compact()
-            if not report.claimed:
+            if not claimed:
                 stop.wait(self.s.enricher.poll_s)
 
     def run_until_idle(self) -> None:
         """Enrich everything queued, then return. For tests and one-off runs."""
-        while self.step().claimed:
+        while self.step_all():
             pass
 
 
@@ -492,9 +537,42 @@ def run_enricher(
                     settings.enricher.device, settings.enricher.embed_batch
                 )
 
+        index.ensure_payload_indexes()
         embedder = make_embedder()
         log.info("embedder %s on %s", embedder.model_id, settings.enricher.device)
         with TmpArea(settings.tmp_dir, "enricher") as tmp:
-            loop = Enricher(settings, conn, tmp, embedder, index, worker_id("enricher"))
+            worker = worker_id("enricher")
+            loop = Enricher(settings, conn, tmp, embedder, index, worker)
+            if settings.enricher.entities:
+                loop.entity_lane = make_entity_lane(settings, conn, tmp, embedder, index, worker)
             loop.check_vectors()
             loop.run(stop)
+
+
+def make_entity_lane(
+    settings: Settings,
+    conn: sqlite3.Connection,
+    tmp: TmpArea,
+    embedder: Embedder,
+    index: VectorIndex,
+    worker: str,
+) -> Any:
+    """The entity queue with real models, or None if no KB snapshot is indexed yet."""
+    from newsrag.link.lane import EntityLane, build_stage
+
+    built = build_stage(settings, embedder, index)
+    if built is None:
+        log.warning("no indexed KB snapshot under %s/kb: entity stage off", settings.data_dir)
+        return None
+    stage, version = built
+    log.info("entity stage %s (NER %s)", version, stage.ner.model_id)
+    return EntityLane(
+        settings,
+        conn,
+        tmp,
+        stage,
+        index,
+        worker,
+        version,
+        batch_docs=settings.enricher.entity_batch_docs,
+    )

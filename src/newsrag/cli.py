@@ -30,6 +30,8 @@ report_app = typer.Typer(no_args_is_help=True, help="Lag and disk reports.")
 app.add_typer(report_app, name="report")
 kb_app = typer.Typer(no_args_is_help=True, help="Local Wikidata subset (knowledge base).")
 app.add_typer(kb_app, name="kb")
+eval_app = typer.Typer(no_args_is_help=True, help="Evaluation sets: entity linking (G2.2).")
+app.add_typer(eval_app, name="eval")
 enrich_app = typer.Typer(no_args_is_help=True, help="Enricher state and vector store checks.")
 app.add_typer(enrich_app, name="enrich")
 
@@ -428,6 +430,20 @@ def kb_build(
     t0 = time.monotonic()
     counts = build_snapshot(shards, root / snap, snap, utcnow())
     typer.echo(f"snapshot {snap}: {counts} in {(time.monotonic() - t0) / 60:.0f} min")
+    kb_index(snap)
+
+
+@kb_app.command("index")
+def kb_index(snapshot: str = typer.Argument(..., help="Snapshot id, e.g. 20261019.")) -> None:
+    """Build the linker's lookup index (kb.duckdb) for a snapshot."""
+    import time
+
+    from newsrag.kb.index import build_index
+
+    settings = load_settings()
+    t0 = time.monotonic()
+    counts = build_index(settings.data_dir / "kb" / snapshot)
+    typer.echo(f"index {snapshot}: {counts} in {(time.monotonic() - t0) / 60:.0f} min")
 
 
 @enrich_app.command("status")
@@ -497,6 +513,144 @@ def enrich_reconcile(
     conn.close()
     if not r.ok and not repair:
         raise typer.Exit(1)
+
+
+def _eval_paths() -> tuple[Path, Path]:
+    settings = load_settings()
+    return settings.data_dir / "eval" / "linking-review.jsonl", REPO_ROOT / "eval" / "linking.yaml"
+
+
+def _entity_stage() -> tuple[object, object]:
+    """Load the embedder, vector index and entity stage (GPU) for evaluation commands."""
+    import os
+
+    os.environ.setdefault("HF_HUB_OFFLINE", "1")
+    from newsrag.enrich.embedder import DIMS, SentenceTransformerEmbedder
+    from newsrag.enrich.enricher import COLLECTION
+    from newsrag.enrich.vectors import VectorIndex
+    from newsrag.link.lane import build_stage
+
+    settings = load_settings()
+    embedder = SentenceTransformerEmbedder(settings.enricher.device)
+    index = VectorIndex.connect(settings.enricher.qdrant_url, COLLECTION, DIMS)
+    built = build_stage(settings, embedder, index)
+    if built is None:
+        raise typer.BadParameter("no indexed KB snapshot (newsrag kb index <snapshot>)")
+    return built
+
+
+def _run_stage(stage: object, docs: list[object], chunk: int = 32) -> list[object]:
+    from newsrag.segment.segmenter import segment
+    from newsrag.timeutil import utcnow
+
+    out = []
+    for i in range(0, len(docs), chunk):
+        part = docs[i : i + chunk]
+        segs = [segment(d, "eval") for d in part]  # type: ignore[arg-type]
+        out.extend(stage.run(part, segs, utcnow()))  # type: ignore[attr-defined]
+        typer.echo(f"  {min(i + chunk, len(docs))}/{len(docs)} documents", err=True)
+    return out
+
+
+@eval_app.command("linking-sample")
+def eval_linking_sample(
+    mentions: int = typer.Option(300, help="Mentions to sample."),
+    docs: int = typer.Option(200, help="Documents, one per publisher."),
+    seed: int = typer.Option(1),
+) -> None:
+    """Sample named mentions across publishers and types for the linking test set."""
+    import random
+
+    from newsrag.enrich.enricher import PIPELINE_VERSION
+    from newsrag.evaluation.linking import sample_items, write_items
+    from newsrag.storage.state import connect
+    from newsrag.storage.tables import read_revisions
+
+    settings = load_settings()
+    conn = connect(settings.state_db)
+    rows = conn.execute(
+        "SELECT e.doc_id, e.revision, r.source_id FROM enrichments e "
+        "JOIN doc_revisions r USING (doc_id, revision) "
+        "WHERE e.pipeline_version = ? AND e.state = 'done'",
+        (PIPELINE_VERSION,),
+    ).fetchall()
+    rng = random.Random(seed)
+    by_source: dict[str, list[tuple[str, int]]] = {}
+    for r in rows:
+        by_source.setdefault(r["source_id"], []).append((r["doc_id"], r["revision"]))
+    sources = sorted(by_source)
+    rng.shuffle(sources)
+    keys = [rng.choice(by_source[s]) for s in sources[:docs]]
+    found = read_revisions(conn, settings.data_dir, keys)
+    documents = [found[k] for k in keys if k in found]
+    stage, version = _entity_stage()
+    typer.echo(f"running {version} on {len(documents)} documents", err=True)
+    results = _run_stage(stage, documents)  # type: ignore[arg-type]
+    items = sample_items(documents, results, stage.kb, mentions, seed)  # type: ignore[arg-type,attr-defined]
+    path, _ = _eval_paths()
+    write_items(path, items)
+    typer.echo(f"wrote {len(items)} items to {path}")
+
+
+@eval_app.command("linking-page")
+def eval_linking_page() -> None:
+    """Render the review items as a local HTML page for verification."""
+    from newsrag.evaluation.linking import read_items, review_page
+
+    path, _ = _eval_paths()
+    page = path.with_suffix(".html")
+    page.write_text(review_page(read_items(path)), encoding="utf-8")
+    typer.echo(f"open file://{page}")
+
+
+@eval_app.command("linking-import")
+def eval_linking_import(
+    labels: Path = typer.Argument(..., help="labels.json from the page."),
+) -> None:
+    """Write the verified labels to eval/linking.yaml (IDs and offsets only)."""
+    from newsrag.evaluation.linking import import_labels, read_items, summary
+
+    path, gold_path = _eval_paths()
+    golds = import_labels(read_items(path), json.loads(labels.read_text()), gold_path)
+    typer.echo(f"wrote {gold_path}: {summary(golds)}")
+
+
+@eval_app.command("linking")
+def eval_linking(
+    fit_weights: bool = typer.Option(False, "--fit", help="Fit the linker's weights too."),
+) -> None:
+    """Precision and recall of Wikidata links on eval/linking.yaml (G2.2)."""
+    from newsrag.evaluation.linking import cross_validate, examples, fit, read_gold, score
+    from newsrag.link.linker import WEIGHTS
+    from newsrag.storage.state import connect
+    from newsrag.storage.tables import read_revisions
+
+    settings = load_settings()
+    _, gold_path = _eval_paths()
+    golds = read_gold(gold_path)
+    conn = connect(settings.state_db)
+    found = read_revisions(conn, settings.data_dir, sorted({(g.doc_id, g.revision) for g in golds}))
+    documents = list(found.values())
+    stage, version = _entity_stage()
+    results = dict(
+        zip(
+            [(d.doc_id, d.revision) for d in documents],
+            _run_stage(stage, documents),  # type: ignore[arg-type]
+            strict=True,
+        )
+    )
+    exs = examples(golds, results)  # type: ignore[arg-type]
+    typer.echo(f"{version}: {len(exs)} gold mentions")
+    for t in (0.5, 0.6, 0.7, 0.8, 0.9):
+        s = score(exs, WEIGHTS, t)
+        typer.echo(f"  current weights @ {t}: precision {s.precision:.3f} recall {s.recall:.3f}")
+    if fit_weights:
+        for t in (0.5, 0.6, 0.7, 0.8, 0.9):
+            s = cross_validate(exs, t)
+            typer.echo(
+                f"  fitted (5-fold) @ {t}: precision {s.precision:.3f} recall {s.recall:.3f}"
+            )
+        typer.echo(f"fitted on all: {json.dumps({k: round(v, 3) for k, v in fit(exs).items()})}")
 
 
 @test_app.command("kill")
@@ -625,12 +779,16 @@ def run_writer_cmd() -> None:
 def run_enricher_cmd() -> None:
     """Segment and embed stored revisions in micro-batches until SIGTERM/SIGINT."""
     import logging
+    import os
     import signal
     import threading
 
     from newsrag.enrich.enricher import run_enricher
     from newsrag.storage.state import connect, init_schema
 
+    # Local-first: runtime models come from the local cache only, never the Hub.
+    os.environ.setdefault("HF_HUB_OFFLINE", "1")
+    os.environ.setdefault("TRANSFORMERS_OFFLINE", "1")
     _setup_logging()
     # One line per Qdrant request would bury the per-batch summaries.
     logging.getLogger("httpx").setLevel(logging.WARNING)

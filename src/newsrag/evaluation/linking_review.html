@@ -1,0 +1,62 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Linking review</title>
+<style>
+:root { --bg:#fafaf9; --fg:#1c1917; --muted:#78716c; --card:#fff; --line:#e7e5e4; --accent:#2563eb; --ok:#16a34a; }
+@media (prefers-color-scheme: dark) { :root { --bg:#1c1917; --fg:#f5f5f4; --muted:#a8a29e; --card:#292524; --line:#44403c; --accent:#60a5fa; --ok:#4ade80; } }
+body { margin:0; background:var(--bg); color:var(--fg); font:15px/1.5 system-ui, sans-serif; }
+header { position:sticky; top:0; background:var(--bg); border-bottom:1px solid var(--line); padding:10px 16px; display:flex; gap:12px; align-items:center; flex-wrap:wrap; z-index:1; }
+main { max-width:860px; margin:0 auto; padding:16px; }
+.card { background:var(--card); border:1px solid var(--line); border-radius:8px; padding:14px; margin-bottom:14px; }
+.card.done { border-left:4px solid var(--ok); }
+.meta { color:var(--muted); font-size:13px; }
+.ctx { margin:8px 0; }
+.ctx mark { background:#fde68a; color:#1c1917; padding:0 2px; border-radius:2px; }
+label { display:block; padding:4px 6px; border-radius:4px; cursor:pointer; }
+label:hover { background:var(--line); }
+.desc { color:var(--muted); }
+button { font:inherit; padding:6px 12px; border-radius:6px; border:1px solid var(--line); background:var(--card); color:var(--fg); cursor:pointer; }
+button.primary { background:var(--accent); color:#fff; border-color:var(--accent); }
+input[type=text] { font:inherit; padding:2px 6px; width:12em; }
+</style></head><body>
+<header><strong>Linking review</strong><span id="progress"></span>
+<button class="primary" id="export">Export labels.json</button></header>
+<main id="list"></main>
+<script>
+const ITEMS = __DATA__;
+const KEY = "newsrag-linking-review";
+let state = {};
+try { state = JSON.parse(localStorage.getItem(KEY) || "{}"); } catch (e) { state = {}; }
+function save() { try { localStorage.setItem(KEY, JSON.stringify(state)); } catch (e) {} render(); }
+function esc(s) { const d = document.createElement("div"); d.textContent = s ?? ""; return d.innerHTML; }
+function ctx(s) { return esc(s).replace("[[", "<mark>").replace("]]", "</mark>"); }
+function render() {
+  const list = document.getElementById("list"); list.innerHTML = "";
+  let done = 0;
+  ITEMS.forEach((it, i) => {
+    const chosen = state[it.key]; if (chosen) done++;
+    const card = document.createElement("div"); card.className = "card" + (chosen ? " done" : "");
+    const opts = it.candidates.map(c => ({v: c.entity_id, t: `<b>${esc(c.label)}</b> <span class="desc">— ${esc(c.description || "")} · ${c.type} · ${c.sitelinks} sitelinks · score ${c.confidence}</span> <a href="https://www.wikidata.org/wiki/${c.entity_id.slice(3)}" target="_blank" rel="noopener">${c.entity_id.slice(3)}</a>`}));
+    opts.push({v: "none", t: "<b>Not in Wikidata</b> <span class='desc'>(or none of these and no Wikidata page)</span>"});
+    opts.push({v: "ner_error", t: "<b>Not a name / wrong span</b>"});
+    const cur = chosen || it.proposed;
+    card.innerHTML = `<div class="meta">${i + 1} / ${ITEMS.length} · ${esc(it.source)} · NER: ${esc(it.ner)}${it.proposed ? " · proposed: " + esc(it.proposed) : ""}</div>
+      <div class="ctx">${ctx(it.context)}</div>` +
+      opts.map(o => `<label><input type="radio" name="r${i}" value="${o.v}" ${o.v === cur ? "checked" : ""}> ${o.t}</label>`).join("") +
+      `<label>Other QID: <input type="text" placeholder="Q12345" data-i="${i}"></label>` +
+      (chosen ? `<div class="meta">✓ ${esc(chosen)}</div>` : `<button data-confirm="${i}">Confirm selection</button>`);
+    card.querySelectorAll("input[type=radio]").forEach(r => r.addEventListener("change", () => { state[it.key] = r.value; save(); }));
+    const confirm = card.querySelector("button[data-confirm]");
+    if (confirm) confirm.addEventListener("click", () => { const r = card.querySelector("input[type=radio]:checked"); if (r) { state[it.key] = r.value; save(); } });
+    card.querySelector("input[type=text]").addEventListener("change", e => { const v = e.target.value.trim(); if (/^Q\d+$/.test(v)) { state[it.key] = "wd:" + v; save(); } });
+    list.appendChild(card);
+  });
+  document.getElementById("progress").textContent = `${done} of ${ITEMS.length} reviewed`;
+}
+document.getElementById("export").onclick = () => {
+  const blob = new Blob([JSON.stringify(state, null, 1)], {type: "application/json"});
+  const a = document.createElement("a"); a.href = URL.createObjectURL(blob); a.download = "labels.json"; a.click();
+};
+render();
+</script></body></html>

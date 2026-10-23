@@ -25,19 +25,34 @@ import duckdb
 from newsrag.contracts.v1 import EntityType
 from newsrag.kb.extract import RELATION_PROPS
 
-KB_VERSION = "kb-1"
+KB_VERSION = "kb-3"
 
-# Root classes per entity type. The first matching type wins (person before
-# organization before location ...), because some classes sit under several roots.
+# Root classes per entity type. The first matching type wins, because some classes sit
+# under several roots. Location comes before organization: Wikidata files cities,
+# states and countries under organization too (via local government), while companies
+# and universities never reach a location root.
 ROOT_CLASSES: dict[EntityType, tuple[str, ...]] = {
     EntityType.PERSON: ("Q5",),  # human
-    EntityType.ORGANIZATION: ("Q43229", "Q4830453"),  # organization, business
     EntityType.LOCATION: (
         "Q2221906",
         "Q486972",
         "Q56061",
         "Q6256",
     ),  # geo location, settlement, admin territory, country
+    EntityType.ORGANIZATION: (
+        "Q43229",  # organization
+        "Q4830453",  # business
+        # News outlets are filed under publications and mass media, not organization;
+        # they are the publishers of vision section 4.
+        "Q11032",  # newspaper
+        "Q41298",  # magazine
+        "Q192283",  # news agency
+        "Q1153191",  # online newspaper
+        "Q1616075",  # television station
+        "Q14350",  # radio station
+        "Q2001305",  # television channel
+        "Q15265344",  # broadcaster
+    ),
     EntityType.LAW: (
         "Q820655",
         "Q7748",
@@ -45,6 +60,14 @@ ROOT_CLASSES: dict[EntityType, tuple[str, ...]] = {
         "Q2334719",
         "Q131569",
     ),  # statute, law, bill, legal case, treaty
+    # Apps, platforms and software otherwise reach "occurrence" through service ->
+    # economic activity -> process, so product ranks above event.
+    EntityType.PRODUCT: (
+        "Q2424752",  # product
+        "Q7397",  # software
+        "Q35127",  # website
+        "Q1668024",  # service on Internet
+    ),
     EntityType.EVENT: ("Q1656682", "Q1190554"),  # event, occurrence
 }
 TYPE_ORDER = list(ROOT_CLASSES)

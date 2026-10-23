@@ -44,6 +44,8 @@ ml = [
     "lancedb>=0.20",
     "qdrant-client>=1.12",
     "neo4j>=5.20",
+    "gliner==0.2.29",  # NER (P2.4); pins transformers to 5.16
+    "fastcoref==2.1.6",  # coreference; needs the shim in link/coref.py
 ]
 
 [project.scripts]
@@ -53,7 +55,7 @@ newsrag = "newsrag.cli:app"
 where = ["src"]
 
 [tool.setuptools.package-data]
-newsrag = ["py.typed", "contracts/v1/sql/*.sql"]
+newsrag = ["py.typed", "contracts/v1/sql/*.sql", "evaluation/*.html"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
@@ -84,5 +86,5 @@ mypy_path = "src"
 
 # These ship no usable type information; their values are typed Any at our boundary.
 [[tool.mypy.overrides]]
-module = ["pyarrow", "pyarrow.*", "lxml", "lxml.*", "py3langid", "py3langid.*", "feedparser", "pysbd"]
+module = ["pyarrow", "pyarrow.*", "lxml", "lxml.*", "py3langid", "py3langid.*", "feedparser", "pysbd", "gliner", "gliner.*", "fastcoref", "fastcoref.*"]
 ignore_missing_imports = true

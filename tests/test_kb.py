@@ -13,6 +13,7 @@ import pytest
 from newsrag.kb.build import build_snapshot, normalize_alias
 from newsrag.kb.dump import DumpError, extract_dump
 from newsrag.kb.extract import entity_row, parse_time
+from newsrag.kb.index import KbIndex, build_index
 
 NOW = datetime(2026, 10, 23, tzinfo=UTC)
 
@@ -84,6 +85,11 @@ ENTITIES = [
     item("Q5", "human"),
     item("Q486972", "human settlement"),
     item("Q515", "city", p279=["Q486972"]),
+    # Wikidata also files municipalities under organization: location must still win.
+    item("Q15284", "municipality", p279=["Q486972", "Q43229"]),
+    item("Q11032", "newspaper", p279=["Q41298x"]),  # not under organization in Wikidata
+    item("Q1190554", "occurrence"),
+    item("Q1668024", "service on Internet", p279=["Q1190554"]),
     # Seeds.
     item(
         "Q1001",
@@ -104,7 +110,13 @@ ENTITIES = [
         sitelinks=0,  # no sitelink, but a CIK makes it notable
         claims={"P5531": [string_claim("0000123456")], "P127": [{"target": "Q3001"}]},
     ),
-    item("Q4001", "Millbrook", p31=["Q515"], sitelinks=5),
+    {
+        **item("Q4001", "Millbrook", p31=["Q515"], sitelinks=5),
+        "aliases": {"mul": [{"language": "mul", "value": "MLB-T"}]},
+    },
+    item("Q4002", "Ashford", p31=["Q15284"], sitelinks=2),
+    item("Q2002", "The Millbrook Ledger", p31=["Q11032"], sitelinks=3),
+    item("Q2003", "ClipClop", p31=["Q1668024"], sitelinks=4),
     # Background: not notable itself, reachable only through Q2001's "owned by".
     item("Q3001", "Ignatius Holdings Trust", p31=["Q43229"]),
     # Not notable and unconnected: not in the KB.
@@ -170,6 +182,9 @@ def test_dump_to_snapshot(dump: Path, tmp_path: Path) -> None:
     assert ents["Q1001"] == ("person", True)
     assert ents["Q2001"] == ("organization", True)  # via news company -> business -> organization
     assert ents["Q4001"] == ("location", True)  # via city -> settlement
+    assert ents["Q4002"] == ("location", True)  # settlement and organization: location wins
+    assert ents["Q2002"] == ("organization", True)  # a newspaper is a publisher
+    assert ents["Q2003"] == ("product", True)  # an online service, not an "occurrence"
     assert ents["Q3001"] == ("organization", False)  # background, 1 hop from a seed
     assert "Q3002" not in ents  # not notable, not connected
     rels = con.execute(
@@ -183,7 +198,8 @@ def test_dump_to_snapshot(dump: Path, tmp_path: Path) -> None:
         con.execute(f"SELECT alias, entity_id FROM '{out / 'aliases.parquet'}'").fetchall()
     )
     assert aliases["r. delgado"] == "wd:Q1001" and aliases["millbrook"] == "wd:Q4001"
-    assert counts["seeds"] == 3 and counts["entities"] == len(ents)
+    assert aliases["mlb-t"] == "wd:Q4001"  # a "mul" alias
+    assert counts["seeds"] == 6 and counts["entities"] == len(ents)
     meta = orjson.loads((out / "meta.json").read_bytes())
     assert meta["kb_snapshot"] == "20261019" and meta["entities_by_type"]["person"] >= 1
 
@@ -194,3 +210,22 @@ def test_truncated_dump_fails_loudly(dump: Path, tmp_path: Path) -> None:
     truncated.write_bytes(data[: len(data) // 2])
     with pytest.raises(DumpError):
         extract_dump(truncated, tmp_path / "x", workers=1, progress=False)
+
+
+def test_index_lookups(dump: Path, tmp_path: Path) -> None:
+    shards = tmp_path / "extract"
+    extract_dump(dump, shards, workers=1, progress=False)
+    out = tmp_path / "kb" / "20261019"
+    build_snapshot(shards, out, "20261019", NOW)
+    assert build_index(out)["entities"] > 0
+    kb = KbIndex(out)
+    cands = kb.candidates(["r. delgado", "millbrook", "nobody"])
+    assert [c.entity.entity_id for c in cands["r. delgado"]] == ["wd:Q1001"]
+    assert cands["millbrook"][0].entity.type == "location" and cands["nobody"] == []
+    assert kb.entities(["wd:Q2001"])["wd:Q2001"].label == "Millbrook Ledger Company"
+    rels = kb.relations_among(["wd:Q1001", "wd:Q2001", "wd:Q3001"])
+    assert {(r.src, r.relation, r.dst) for r in rels} == {
+        ("wd:Q1001", "P108", "wd:Q2001"),
+        ("wd:Q2001", "P127", "wd:Q3001"),
+    }
+    kb.close()

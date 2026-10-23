@@ -55,16 +55,28 @@ def claim(
     limit: int,
     lease_s: float,
     now: datetime,
+    after: str | None = None,
 ) -> list[EnrichClaim]:
     """Lease up to ``limit`` pending revisions, newest stored first, so fresh articles
-    never wait behind a backfill."""
+    never wait behind a backfill. With ``after``, only revisions that pipeline version
+    has finished with (done, skipped or failed)."""
     expires = to_db(now + timedelta(seconds=lease_s))
+    gate = (
+        "AND EXISTS (SELECT 1 FROM enrichments p WHERE p.doc_id = e.doc_id "
+        "AND p.revision = e.revision AND p.pipeline_version = ? "
+        "AND p.state IN ('done', 'skipped', 'failed')) "
+        if after
+        else ""
+    )
+    params: tuple[object, ...] = (
+        (pipeline_version, after, limit) if after else (pipeline_version, limit)
+    )
     with transaction(conn):
         rows = conn.execute(
-            "SELECT doc_id, revision, ingested_at, attempts, segments FROM enrichments "
-            "WHERE pipeline_version = ? AND state = 'pending' "
+            "SELECT doc_id, revision, ingested_at, attempts, segments FROM enrichments e "
+            f"WHERE pipeline_version = ? AND state = 'pending' {gate}"
             "ORDER BY ingested_at DESC LIMIT ?",
-            (pipeline_version, limit),
+            params,
         ).fetchall()
         conn.executemany(
             "UPDATE enrichments SET state = 'running', attempts = attempts + 1, "

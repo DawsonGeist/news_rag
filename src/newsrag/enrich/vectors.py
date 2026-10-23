@@ -23,13 +23,14 @@ from collections.abc import Iterable, Sequence
 from dataclasses import dataclass
 from typing import Any
 
+import numpy as np
 from qdrant_client import QdrantClient
 from qdrant_client import models as m
 
 from newsrag.enrich.embedder import Vectors
 
 # Payload fields with an index. Gated search filters on these (entity IDs join in P2.4).
-KEYWORD_FIELDS = ("doc_id", "source_id", "level")
+KEYWORD_FIELDS = ("doc_id", "source_id", "level", "entities")
 INTEGER_FIELDS = ("published", "revision")
 
 
@@ -37,7 +38,7 @@ def point_id(segment_id: str) -> str:
     return str(uuid.UUID(hex=segment_id))
 
 
-def segment_id_of(pid: str | int) -> str:
+def segment_id_of(pid: object) -> str:
     return uuid.UUID(str(pid)).hex
 
 
@@ -135,6 +136,49 @@ class VectorIndex:
                 ),
                 wait=True,
             )
+
+    def ensure_payload_indexes(self) -> None:
+        """Add payload indexes introduced after the collection was created (idempotent)."""
+        info = self.c.get_collection(self.collection)
+        have = set(info.payload_schema or {})
+        for name in KEYWORD_FIELDS:
+            if name not in have:
+                self.c.create_payload_index(self.collection, name, m.PayloadSchemaType.KEYWORD)
+        for name in INTEGER_FIELDS:
+            if name not in have:
+                self.c.create_payload_index(self.collection, name, m.PayloadSchemaType.INTEGER)
+
+    def vectors(self, segment_ids: Sequence[str]) -> dict[str, Vectors]:
+        """Stored vectors by segment ID (missing points are absent)."""
+        if not segment_ids:
+            return {}
+        recs = self.c.retrieve(
+            self.collection,
+            [point_id(s) for s in segment_ids],
+            with_payload=False,
+            with_vectors=True,
+        )
+        return {
+            segment_id_of(r.id): np.asarray(r.vector, dtype=np.float32)
+            for r in recs
+            if isinstance(r.vector, list)
+        }
+
+    def set_entities(self, doc_id: str, revision: int, entity_ids: Sequence[str]) -> None:
+        """Tag a revision's points with its entities: the gate of entity-filtered search."""
+        self.c.set_payload(
+            self.collection,
+            payload={"entities": list(entity_ids)},
+            points=m.FilterSelector(
+                filter=m.Filter(
+                    must=[
+                        m.FieldCondition(key="doc_id", match=m.MatchValue(value=doc_id)),
+                        m.FieldCondition(key="revision", match=m.MatchValue(value=revision)),
+                    ]
+                )
+            ),
+            wait=True,
+        )
 
     def count(self) -> int:
         return self.c.count(self.collection, exact=True).count

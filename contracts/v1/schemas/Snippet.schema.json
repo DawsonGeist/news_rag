@@ -49,7 +49,7 @@
   },
   "$id": "newsrag/contracts/v1/Snippet",
   "additionalProperties": false,
-  "description": "N words either side of a resolved mention: the unit stance is judged on, and the join\npoint between the entity map and the vector index.",
+  "description": "The sentences around a resolved mention: the unit stance is judged on, and the join\npoint between the entity map and the vector index.\n\nAt rest ``text`` is None: it is always ``extracted_text[locator]`` (or the title), and\nstoring it would copy most of the archive again. It is filled when a snippet is handed\nto a consumer such as the stance model.",
   "properties": {
     "doc_id": {
       "pattern": "^[0-9a-f]{32}$",
@@ -126,8 +126,16 @@
       "title": "Stance Score"
     },
     "text": {
-      "title": "Text",
-      "type": "string"
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Text"
     },
     "window_words": {
       "exclusiveMinimum": 0,
@@ -141,7 +149,6 @@
     "revision",
     "entity_id",
     "mention_id",
-    "text",
     "locator",
     "window_words",
     "pipeline_version"

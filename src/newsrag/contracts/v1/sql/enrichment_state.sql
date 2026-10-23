@@ -30,6 +30,7 @@ CREATE TABLE IF NOT EXISTS enrichments (
     finished_at      TEXT,
     segments         INTEGER,           -- rows written to the segments table
     vectors          INTEGER,           -- points written to the vector store (reconcile oracle)
+    entity_ids       TEXT,              -- entity stage: JSON list tagged on the revision's points
     updated_at       TEXT NOT NULL,
     PRIMARY KEY (doc_id, revision, pipeline_version)
 ) STRICT;

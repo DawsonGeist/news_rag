@@ -147,7 +147,16 @@ def entity_row(e: dict[str, Any]) -> EntityRow | None:
         return None
     labels = e.get("labels") or {}
     en = labels.get("en") or labels.get("mul")
-    aliases = [a["value"] for a in (e.get("aliases") or {}).get("en", []) if a.get("value")]
+    # Wikidata moves language-neutral names (acronyms such as "EU") from "en" to "mul".
+    all_aliases = e.get("aliases") or {}
+    aliases = list(
+        dict.fromkeys(
+            a["value"]
+            for lang in ("en", "mul")
+            for a in all_aliases.get(lang, [])
+            if a.get("value")
+        )
+    )
     if not en and not aliases:
         return None
     sitelinks = e.get("sitelinks") or {}
