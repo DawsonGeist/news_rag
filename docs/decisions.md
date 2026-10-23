@@ -2,6 +2,16 @@
 
 Newest first. Each entry records what was decided, why, and what would reopen it.
 
+## 2026-10-23: P2.2 knowledge base (Wikidata subset)
+
+| Decision | Choice | Why | Revisit if |
+| --- | --- | --- | --- |
+| Dump | The full JSON dump, **gzip** (157 GB; bz2 is 103 GB but decompresses about 5× slower), from the **dated** path (`20261019`). The snapshot id is the dump date. | Qualifiers (start/end dates) are only in the full dump; gzip plus `pigz` keeps a build at about 1 h; a dated path makes a snapshot reproducible | — |
+| Extraction | `pigz` → 64 MiB line-aligned blocks → 12 spawn workers parse with orjson and write Parquet shards. Items without an English label/alias (`en` or `mul`) and bulk non-news classes (scholarly articles, Wikimedia internals, genes, proteins, chemicals, astronomical objects) are dropped. A corrupt or truncated dump fails loudly (`DumpError`). | 1.5 TB of JSON; a silent early stop would build a partial KB that looks complete | — |
+| Typing and seeds | `EntityType` by the transitive `P279` closure of root classes, in priority order (person, organization, location, law, event). Seeds are typed **and** notable (a sitelink, or a CIK, ticker or website). | Keeps the subset to entities news can mention | Linking misses notable local entities |
+| One hop | Neighbours of seeds through the 20 kept relation properties, **in both directions** | "Background" entities (owners, employers) often point *to* a seed rather than being pointed at | — |
+| Build after download | A waiting user unit starts the build only once the download unit exits **and** the file is exactly the advertised size | Never builds from a partial download | — |
+
 ## 2026-10-23: P2.1 vector-store prototype
 
 | Decision | Choice | Why | Revisit if |

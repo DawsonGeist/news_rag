@@ -28,6 +28,8 @@ app.add_typer(run_app, name="run")
 app.add_typer(fixtures_app, name="fixtures")
 report_app = typer.Typer(no_args_is_help=True, help="Lag and disk reports.")
 app.add_typer(report_app, name="report")
+kb_app = typer.Typer(no_args_is_help=True, help="Local Wikidata subset (knowledge base).")
+app.add_typer(kb_app, name="kb")
 
 SCHEMAS_DIR = REPO_ROOT / "contracts" / "v1" / "schemas"
 FEEDS_DIR = REPO_ROOT / "feeds"
@@ -394,6 +396,36 @@ def report_disk() -> None:
     conn = connect(settings.state_db)
     typer.echo(format_disk(disk_report(conn, settings, utcnow())))
     conn.close()
+
+
+@kb_app.command("build")
+def kb_build(
+    dump: Path = typer.Argument(..., help="wikidata-<YYYYMMDD>-all.json.gz"),
+    snapshot: str | None = typer.Option(None, help="Snapshot id; default: the dump's date."),
+    workers: int = typer.Option(12, help="Parser processes."),
+    max_blocks: int | None = typer.Option(None, help="Only the first N 64 MiB blocks (testing)."),
+    skip_extract: bool = typer.Option(False, help="Re-use existing extract shards."),
+) -> None:
+    """Stream a Wikidata dump into the local KB snapshot under data/kb/<snapshot>/."""
+    import re
+    import time
+
+    from newsrag.kb.build import build_snapshot
+    from newsrag.kb.dump import extract_dump
+    from newsrag.timeutil import utcnow
+
+    settings = load_settings()
+    found = re.search(r"(\d{8})", dump.name)
+    snap = snapshot or (found.group(1) if found else "unknown")
+    root = settings.data_dir / "kb"
+    shards = root / "extract" / snap
+    if not skip_extract:
+        t0 = time.monotonic()
+        stats = extract_dump(dump, shards, workers, max_blocks)
+        typer.echo(f"extract: {stats} in {(time.monotonic() - t0) / 60:.0f} min")
+    t0 = time.monotonic()
+    counts = build_snapshot(shards, root / snap, snap, utcnow())
+    typer.echo(f"snapshot {snap}: {counts} in {(time.monotonic() - t0) / 60:.0f} min")
 
 
 @test_app.command("kill")

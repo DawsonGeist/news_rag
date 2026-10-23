@@ -24,6 +24,7 @@ dependencies = [
     "duckdb>=1.1",
     "python-ulid>=2.7",
     "pysbd>=0.3.4",  # sentence splitting (segmenter)
+    "orjson>=3.10",  # Wikidata dump parsing
 ]
 
 [project.optional-dependencies]

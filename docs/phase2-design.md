@@ -159,7 +159,7 @@ The expected size is a few million entities and a few tens of GB, measured on th
 
 1. **P2.0 Contracts** (done): `SegmentLevel.PASSAGE`/`TITLE`, `EntityRelation`, `kb_snapshot`; the `enrichments` and `link_overrides` DDL (`enrichment_state.sql`); table groups with one writer and lock each, plus scoped recovery and verification in storage.
 2. **P2.1 Segmenter** (done, `seg-1`), plus the vector-store prototype on the real archive (passages, two embedders) → decision.
-3. **P2.2 KB build** (1 hop), plus the graph-store prototype → decision.
+3. **P2.2 KB build** (1 hop): `newsrag kb build` (dump → shards → snapshot) built and tested; the first full snapshot (`20261019`) builds after the dump download. Graph store decided: Neo4j.
 4. **P2.3 Enricher process:** segment and embed in micro-batches, with index lag measured.
 5. **P2.4 NER, coreference, linking and snippets,** plus the linking test set.
 6. **P2.5 Eval tooling,** with the author's queries labelled.
