@@ -60,13 +60,15 @@ class Engine(Protocol):
 class LanceEngine:
     name = "lancedb"
 
-    def __init__(self, root: Path) -> None:
+    def __init__(self, root: Path, reuse: bool = False, params: dict[str, Any] | None = None) -> None:
         import lancedb
 
-        shutil.rmtree(root, ignore_errors=True)
+        if not reuse:
+            shutil.rmtree(root, ignore_errors=True)
         self.root = root
         self.db = lancedb.connect(root)
-        self.tbl: Any = None
+        self.tbl: Any = self.db.open_table("passages") if reuse else None
+        self.params = params or {}
 
     def load(self, rows: pa.Table) -> None:
         self.tbl = self.db.create_table("passages", data=rows)
@@ -86,6 +88,9 @@ class LanceEngine:
 
     def search(self, q, k, docs, date):  # type: ignore[no-untyped-def]
         s = self.tbl.search(q).limit(k).select(["row", "_distance"])
+        for knob in ("nprobes", "ef", "refine_factor"):
+            if knob in self.params:
+                s = getattr(s, knob)(self.params[knob])
         clauses = []
         if docs is not None:
             clauses.append("doc_id IN (" + ",".join(f"'{d}'" for d in docs) + ")")
@@ -112,11 +117,12 @@ class QdrantEngine:
     name = "qdrant"
     COLLECTION = "proto_passages"
 
-    def __init__(self, root: Path) -> None:
+    def __init__(self, root: Path, reuse: bool = False, params: dict[str, Any] | None = None) -> None:
         from qdrant_client import QdrantClient
 
         self.c = QdrantClient(url="http://127.0.0.1:6333", prefer_grpc=True, timeout=600)
-        if self.c.collection_exists(self.COLLECTION):
+        self.params = params or {}
+        if not reuse and self.c.collection_exists(self.COLLECTION):
             self.c.delete_collection(self.COLLECTION)
 
     def _points(self, rows: pa.Table):  # type: ignore[no-untyped-def]
@@ -170,8 +176,22 @@ class QdrantEngine:
             must.append(m.FieldCondition(key="doc_id", match=m.MatchAny(any=list(docs))))
         if date is not None:
             must.append(m.FieldCondition(key="published", range=m.Range(gte=date[0], lt=date[1])))
+        sp = None
+        if self.params:
+            sp = m.SearchParams(
+                hnsw_ef=self.params.get("hnsw_ef"),
+                acorn=m.AcornSearchParams(enable=True) if self.params.get("acorn") else None,
+                quantization=m.QuantizationSearchParams(
+                    rescore=self.params.get("rescore", True),
+                    oversampling=self.params.get("oversampling"),
+                ),
+            )
         r = self.c.query_points(
-            self.COLLECTION, query=q.tolist(), limit=k, query_filter=m.Filter(must=must) if must else None
+            self.COLLECTION,
+            query=q.tolist(),
+            limit=k,
+            query_filter=m.Filter(must=must) if must else None,
+            search_params=sp,
         )
         return [int(p.id) for p in r.points]
 
@@ -182,7 +202,7 @@ class QdrantEngine:
 class Neo4jEngine:
     name = "neo4j"
 
-    def __init__(self, root: Path) -> None:
+    def __init__(self, root: Path, reuse: bool = False, params: dict[str, Any] | None = None) -> None:
         from neo4j import GraphDatabase
 
         repo = Path(__file__).resolve().parents[2]
@@ -190,8 +210,9 @@ class Neo4jEngine:
             line.split("=", 1) for line in (repo / "deploy" / ".env").read_text().split() if "=" in line
         )
         self.d = GraphDatabase.driver("bolt://127.0.0.1:7687", auth=("neo4j", env["NEO4J_PASSWORD"]))
-        self._q("DROP INDEX proto_passage_vec IF EXISTS")
-        self._q("MATCH (p:ProtoPassage) CALL (p) { DETACH DELETE p } IN TRANSACTIONS OF 20000 ROWS")
+        if not reuse:
+            self._q("DROP INDEX proto_passage_vec IF EXISTS")
+            self._q("MATCH (p:ProtoPassage) CALL (p) { DETACH DELETE p } IN TRANSACTIONS OF 20000 ROWS")
 
     def _q(self, cypher: str, **params: Any) -> list[Any]:
         if "IN TRANSACTIONS" in cypher:  # needs an implicit (auto-commit) transaction
@@ -207,9 +228,12 @@ class Neo4jEngine:
                 rows["row"].to_pylist(), rows["doc_id"].to_pylist(), rows["published"].to_pylist(), vecs, strict=True
             )
         ]
+        # Native VECTOR<FLOAT32> (Cypher 25): a plain list property is stored as 64-bit
+        # doubles, which more than doubled the store in the first run.
+        dim = len(batch[0]["vector"])
         self._q(
-            "UNWIND $rows AS r CREATE (:ProtoPassage {row: r.row, doc_id: r.doc_id, "
-            "published: r.published, vector: r.vector})",
+            "CYPHER 25 UNWIND $rows AS r CREATE (:ProtoPassage {row: r.row, doc_id: r.doc_id, "
+            f"published: r.published, vector: vector(r.vector, {dim}, FLOAT32)}})",
             rows=batch,
         )
 
@@ -308,7 +332,14 @@ def pct(values: list[float], p: float) -> float:
     return statistics.quantiles(values, n=100)[int(p) - 1] if len(values) > 1 else values[0]
 
 
-def run(engine_name: str, model: str, root: Path | None = None, random_queries: bool = False) -> dict[str, Any]:
+def run(
+    engine_name: str,
+    model: str,
+    root: Path | None = None,
+    random_queries: bool = False,
+    reuse: bool = False,
+    params: dict[str, Any] | None = None,
+) -> dict[str, Any]:
     s = load_settings()
     out = root or s.data_dir / "prototype" / "vector_store"
     table, vectors = load_corpus(out, model)
@@ -322,8 +353,10 @@ def run(engine_name: str, model: str, root: Path | None = None, random_queries: 
         queries = query_vectors(model, N_QUERIES)
     vg = torch.from_numpy(np.asarray(vectors)).to("cuda", torch.float16)
 
-    engine: Engine = ENGINES[engine_name](out / f"store-{engine_name}")
-    res: dict[str, Any] = {"engine": engine_name, "model": model, "passages": n}
+    engine: Engine = ENGINES[engine_name](out / f"store-{engine_name}", reuse, params)
+    res: dict[str, Any] = {"engine": engine_name, "model": model, "passages": n, "params": params or {}}
+    if reuse:
+        return _search_suite(engine, table, queries, vg, res, out, engine_name, tuned=True)
 
     base = table.slice(0, n - append_rows)
     t0 = time.perf_counter()
@@ -342,6 +375,10 @@ def run(engine_name: str, model: str, root: Path | None = None, random_queries: 
     res["append_batch_rows"] = APPEND_BATCH
     res["append_p50_s"], res["append_p95_s"] = round(pct(append_s, 50), 3), round(pct(append_s, 95), 3)
 
+    return _search_suite(engine, table, queries, vg, res, out, engine_name, tuned=False)
+
+
+def _search_suite(engine, table, queries, vg, res, out, engine_name, tuned):  # type: ignore[no-untyped-def]
     doc_ids = table["doc_id"].to_pylist()
     published = table["published"].to_numpy()
     rng = np.random.default_rng(5)
@@ -375,10 +412,11 @@ def run(engine_name: str, model: str, root: Path | None = None, random_queries: 
         }
         print(f"{label:28} {res[label]}", flush=True)
 
-    measure("unfiltered_with_backlog", None, False)  # appended rows not yet folded in
-    t0 = time.perf_counter()
-    engine.maintain()
-    res["maintain_s"] = round(time.perf_counter() - t0, 1)
+    if not tuned:
+        measure("unfiltered_with_backlog", None, False)  # appended rows not yet folded in
+        t0 = time.perf_counter()
+        engine.maintain()
+        res["maintain_s"] = round(time.perf_counter() - t0, 1)
     measure("unfiltered", None, False)
     measure("date_7d", None, True)
     for size in GATE_SIZES:
@@ -389,8 +427,9 @@ def run(engine_name: str, model: str, root: Path | None = None, random_queries: 
     gate = list(rng.choice(unique_docs, size=min(1_000, len(unique_docs)), replace=False))
     measure("gate_1000_docs_and_date", gate, True)
     res["disk_gb"] = round(engine.disk_bytes() / 1e9, 2)
-    print(f"disk {res['disk_gb']} GB, maintain {res['maintain_s']} s", flush=True)
-    (out / f"results-{engine_name}.json").write_text(json.dumps(res, indent=2))
+    print(f"disk {res['disk_gb']} GB", flush=True)
+    suffix = "-tuned" if tuned else ""
+    (out / f"results-{engine_name}{suffix}.json").write_text(json.dumps(res, indent=2))
     return res
 
 
@@ -400,5 +439,7 @@ if __name__ == "__main__":
     ap.add_argument("--model", default="BAAI/bge-m3")
     ap.add_argument("--root", type=Path, default=None, help="Corpus directory (default: the data dir's).")
     ap.add_argument("--random-queries", action="store_true", help="Smoke test: no model load.")
+    ap.add_argument("--reuse", action="store_true", help="Search the already-loaded store only.")
+    ap.add_argument("--params", type=json.loads, default=None, help="Engine search params (JSON).")
     args = ap.parse_args()
-    run(args.engine, args.model, args.root, args.random_queries)
+    run(args.engine, args.model, args.root, args.random_queries, args.reuse, args.params)

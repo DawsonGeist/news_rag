@@ -2,6 +2,14 @@
 
 Newest first. Each entry records what was decided, why, and what would reopen it.
 
+## 2026-10-23: P2.1 vector-store prototype (recommendation, awaiting the author)
+
+| Decision | Choice | Why | Revisit if |
+| --- | --- | --- | --- |
+| Vectors in Neo4j | **No.** Neo4j stays the graph store only. | Community edition can't store the native `VECTOR<FLOAT32>` type (it needs the Enterprise "block" store format), so vectors are 64-bit doubles: 2.4× the disk (about 1 TB/yr) and a bulk load about 100× slower. See p2.1-vector-store.md. | Moving to Neo4j Enterprise |
+| Vector store | **Recommended: Qdrant** (author to confirm). LanceDB is the embedded fallback. | Equal gated recall (about 0.995 at 100–10k-document gates, tuned); Qdrant is about 10× faster on gates and date filters, indexes online, and passed 10/10 hard-kill tests | — |
+| Vector disk | Shrink the stored format: float16 originals and/or 512-d Matryoshka vectors; decide with the embedder evaluation | 1024-d float32 costs about 5.7 KB/passage, about 400 GB/yr; the target is about 100–140 GB/yr | — |
+
 ## 2026-10-23: P2.1 segmenter and the GPU stack
 
 | Decision | Choice | Why | Revisit if |
