@@ -12,7 +12,7 @@ from newsrag import ids
 from newsrag.config import Settings
 from newsrag.contracts.v1 import Document
 from newsrag.extract.extractor import ExtractContext, extract
-from newsrag.obs.reports import disk_report, lag_report, percentile
+from newsrag.obs.reports import STAGES, disk_report, lag_report, percentile
 from newsrag.storage.blobs import BlobStore
 from newsrag.storage.compaction import compact, plan
 from newsrag.storage.fsio import TmpArea
@@ -219,13 +219,5 @@ def test_disk_report_on_empty_archive(conn: sqlite3.Connection, data_dir: Path) 
 
 def test_lag_report_empty(conn: sqlite3.Connection) -> None:
     r = lag_report(conn, utcnow(), timedelta(hours=24))
-    assert r.groups == {} and set(r.stages) == {
-        "discover",
-        "fetch",
-        "extract",
-        "store",
-        "segment",
-        "embed",
-        "index",
-    }
+    assert r.groups == {} and set(r.stages) == set(STAGES)
     assert r.index.n == 0 and r.oldest_unenriched_s is None

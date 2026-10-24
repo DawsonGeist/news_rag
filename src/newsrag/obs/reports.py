@@ -34,7 +34,7 @@ from pathlib import Path
 from newsrag.config import Settings
 from newsrag.timeutil import from_db, to_db
 
-STAGES = ("discover", "fetch", "extract", "store", "segment", "embed", "index")
+STAGES = ("discover", "fetch", "extract", "store", "segment", "embed", "index", "ner", "link")
 
 
 def percentile(values: Sequence[float], q: float) -> float | None:
@@ -150,7 +150,8 @@ def lag_report(
     done = conn.execute(
         "SELECT e.ingested_at, e.finished_at, r.published_at FROM enrichments e "
         "JOIN doc_revisions r USING (doc_id, revision) "
-        "WHERE e.state = 'done' AND e.ingested_at >= ?",
+        # Searchable = vectors written (the "enrich-*" queue); the entity queue runs after.
+        "WHERE e.state = 'done' AND e.pipeline_version LIKE 'enrich-%' AND e.ingested_at >= ?",
         (to_db(start),),
     ).fetchall()
     index_lag = [
@@ -163,11 +164,16 @@ def lag_report(
     ]
     report.index = Dist.of(index_lag)
     report.published_to_searchable = Dist.of(searchable)
-    report.enrich_queue = dict(
-        conn.execute("SELECT state, count(*) FROM enrichments GROUP BY state").fetchall()
-    )
+    report.enrich_queue = {
+        f"{r[0]}:{r[1]}": r[2]
+        for r in conn.execute(
+            "SELECT pipeline_version, state, count(*) FROM enrichments "
+            "WHERE state IN ('pending', 'running', 'failed') GROUP BY 1, 2"
+        )
+    }
     oldest_enrich = conn.execute(
-        "SELECT min(ingested_at) FROM enrichments WHERE state IN ('pending', 'running')"
+        "SELECT min(ingested_at) FROM enrichments WHERE state IN ('pending', 'running') "
+        "AND pipeline_version LIKE 'enrich-%'"
     ).fetchone()[0]
     report.oldest_unenriched_s = (
         (now - from_db(oldest_enrich)).total_seconds() if oldest_enrich else None
@@ -208,7 +214,7 @@ def format_lag(r: LagReport) -> str:
             f"    {label:<11} {_fmt_s(d.p50):>7} {_fmt_s(d.p95):>7} {_fmt_s(d.p99):>7}  n={d.n}"
         )
     out.append(
-        f"    enricher {r.enrich_queue}; oldest unenriched revision stored "
+        f"    backlog {r.enrich_queue or 'none'}; oldest revision without vectors stored "
         f"{_fmt_s(r.oldest_unenriched_s)} ago"
     )
     out.append("stages (queue p50/p95, work p50/p95; statuses)")

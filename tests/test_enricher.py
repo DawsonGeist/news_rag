@@ -327,7 +327,7 @@ def test_lag_and_disk_reports_cover_the_enricher(
     make(settings, conn, tmp, index).run_until_idle()
     lag = lag_report(conn, utcnow(), timedelta(hours=1))
     assert lag.index.n == 2 and lag.index.p95 is not None and lag.index.p95 < 60
-    assert lag.enrich_queue == {"done": 2} and lag.oldest_unenriched_s is None
+    assert lag.enrich_queue == {} and lag.oldest_unenriched_s is None
     assert lag.stage_status["index"] == {"ok": 2}
     assert "index" in format_lag(lag)
     disk = disk_report(conn, settings, utcnow())
