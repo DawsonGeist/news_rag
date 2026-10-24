@@ -107,9 +107,8 @@ class EnricherSettings(_Section):
     qdrant_wait_s: float = 120.0  # at startup, e.g. after a reboot while Docker starts
     compact_interval_s: float = 3600.0
     compact_target_mb: int = 128
-    # The entity queue (needs an indexed KB snapshot). Off until the linker's weights are
-    # fitted on the linking test set, so the archive isn't backfilled twice.
-    entities: bool = False
+    # The entity queue; it starts once a KB snapshot is indexed (newsrag kb index).
+    entities: bool = True
     entity_batch_docs: int = 64
 
 

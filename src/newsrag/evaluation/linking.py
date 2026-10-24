@@ -31,11 +31,10 @@ import yaml
 
 from newsrag.contracts.v1 import Document, TextLocator
 from newsrag.kb.index import KbIndex
-from newsrag.link.linker import WEIGHTS, confidence
+from newsrag.link.linker import FEATURES, WEIGHTS, probabilities
 from newsrag.link.stage import DocEntities
 
 GOLD_NONE, GOLD_NER_ERROR = "none", "ner_error"
-FEATURES = [k for k in WEIGHTS if k != "bias"]
 
 
 @dataclass(frozen=True)
@@ -258,10 +257,11 @@ def score(exs: Sequence[Example], weights: dict[str, float], threshold: float) -
     for e in exs:
         if not e.candidates:
             continue
-        best = max(e.candidates, key=lambda c: confidence(c[1], weights))
-        if confidence(best[1], weights) >= threshold:
+        probs = probabilities([f for _, f in e.candidates], weights)
+        p, best = max(zip(probs, (eid for eid, _ in e.candidates), strict=True))
+        if p >= threshold:
             linked += 1
-            correct += best[0] == e.gold
+            correct += best == e.gold
     return LinkScore(
         threshold,
         correct / linked if linked else 0.0,
@@ -272,23 +272,36 @@ def score(exs: Sequence[Example], weights: dict[str, float], threshold: float) -
     )
 
 
-def fit(exs: Sequence[Example], l2: float = 0.01, steps: int = 3000) -> dict[str, float]:
-    """Logistic regression over (candidate features -> is the gold entity), by gradient
-    descent. Mentions whose gold is ``none`` contribute only negatives."""
-    xs, ys = [], []
+def fit(exs: Sequence[Example], l2: float = 0.01, steps: int = 4000) -> dict[str, float]:
+    """Conditional logit (softmax over each mention's candidates plus "not in the KB"),
+    by gradient descent. The target is the gold candidate, or "not in the KB" when the
+    gold is ``none`` or isn't among the candidates (linking anything would be wrong)."""
+    data = []
     for e in exs:
-        for eid, f in e.candidates:
-            xs.append([1.0] + [f.get(k, 0.0) for k in FEATURES])
-            ys.append(1.0 if eid == e.gold else 0.0)
-    if not xs:
+        x = np.array([[f.get(k, 0.0) for k in FEATURES] for _, f in e.candidates]).reshape(
+            -1, len(FEATURES)
+        )
+        target = next((i for i, (eid, _) in enumerate(e.candidates) if eid == e.gold), -1)
+        data.append((x, target))
+    if not data:
         return dict(WEIGHTS)
-    x, y = np.array(xs), np.array(ys)
-    w = np.array([WEIGHTS["bias"]] + [WEIGHTS[k] for k in FEATURES], dtype=float)
+    w = np.array([WEIGHTS[k] for k in FEATURES], dtype=float)
+    nil = float(WEIGHTS["nil"])
+    lr = 0.5
     for _ in range(steps):
-        p = 1 / (1 + np.exp(-(x @ w)))
-        grad = x.T @ (p - y) / len(y) + l2 * np.r_[0.0, w[1:]]
-        w -= 1.0 * grad
-    return {"bias": float(w[0]), **{k: float(v) for k, v in zip(FEATURES, w[1:], strict=True)}}
+        gw, gnil = l2 * w, 0.0
+        for x, target in data:
+            z = np.concatenate([[nil], x @ w])
+            p = np.exp(z - z.max())
+            p /= p.sum()
+            y = np.zeros_like(p)
+            y[0 if target < 0 else target + 1] = 1.0
+            d = p - y
+            gnil += d[0]
+            gw += x.T @ d[1:]
+        w -= lr * gw / len(data)
+        nil -= lr * gnil / len(data)
+    return {"nil": nil, **{k: float(v) for k, v in zip(FEATURES, w, strict=True)}}
 
 
 def cross_validate(

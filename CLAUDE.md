@@ -14,7 +14,7 @@ A local-first search engine over news and long-form content. It finds articles b
 
 ## Status
 
-Phase 1 (vet, poll, fetch, extract, store) is **complete**: it runs as a systemd user service and passes all 7 Gate 1 criteria ([docs/gate1-review.md](docs/gate1-review.md)). Phase 2 (segment, embed, extract entities, link, evaluate) has an **approved design**, [docs/phase2-design.md](docs/phase2-design.md). Done: P2.0 (contracts, table groups), P2.1 (segmenter `seg-1`; vector store prototype → **Qdrant**). P2.2 code (`newsrag kb build`; the first snapshot `20261019` builds automatically after the dump download), P2.3 enricher (`enrich-1`: segments plus bge-m3 vectors in Qdrant, running under `run all`). Next: P2.4 (NER, coreference, linking, snippets). Services (Neo4j graph, Qdrant vectors) run from `deploy/compose.yml`.
+Phase 1 (vet, poll, fetch, extract, store) is **complete**: it runs as a systemd user service and passes all 7 Gate 1 criteria ([docs/gate1-review.md](docs/gate1-review.md)). Phase 2 (segment, embed, extract entities, link, evaluate) has an **approved design**, [docs/phase2-design.md](docs/phase2-design.md). Done: P2.0 (contracts, table groups), P2.1 (segmenter `seg-1`; vector store prototype → **Qdrant**). P2.2 code (`newsrag kb build`; the first snapshot `20261019` builds automatically after the dump download), P2.3 enricher (`enrich-1`: segments plus bge-m3 vectors in Qdrant), P2.4 entities (GLiNER NER, fastcoref, `link-2` linker against KB `kb-3`; mentions, links, snippets; entity IDs tagged on Qdrant points), both running under `run all`. Next: P2.5 (retrieval eval tooling with the author's queries). Services (Neo4j graph, Qdrant vectors) run from `deploy/compose.yml`.
 
 ## Layout
 
@@ -31,6 +31,8 @@ src/newsrag/
   segment/             component 5: segmenter (title, paragraphs, sentences, passages)
   kb/                  local Wikidata subset: dump -> shards -> snapshot (entities, relations, aliases)
   enrich/              enricher process: micro-batches -> segments table + Qdrant vectors; reconcile
+  link/                component 7: NER, coreference, KB linking, snippets (the enricher's entity queue)
+  evaluation/          linking test set tooling (eval/linking.yaml is the author-verified gold set)
   storage/             component 8: state DB, blob store, table files, recovery
   testing/             kill-test harness (shipped so `newsrag test kill` can run it)
   obs/                 component 13: stage events, lag reports
@@ -58,7 +60,10 @@ newsrag storage compact            # merge small Parquet parts (writer does this
 newsrag storage retention          # expire blobs, sweep orphans, prune poll log (daily job)
 newsrag report lag --since 24h     # G1.3 lag percentiles, queue depth
 newsrag report disk                # G1.7 sizes and 12-month forecast
-newsrag kb build <dump.json.gz>    # Wikidata subset snapshot -> data/kb/<date>/
+newsrag kb build <dump.json.gz>    # Wikidata subset snapshot -> data/kb/<date>/ (+ kb.duckdb index)
+newsrag kb index <snapshot>        # rebuild the linker's lookup index only
+newsrag eval linking [--fit]       # G2.2 precision/recall on eval/linking.yaml; --fit refits weights
+newsrag eval linking-sample | linking-page | linking-import   # build/verify a linking test set
 newsrag run enricher               # segment + embed stored revisions into Qdrant until SIGTERM
 newsrag enrich status              # enrichment states, skip reasons, vector counts
 newsrag enrich reconcile [--repair]  # vector store vs done revisions (repair needs the enricher stopped)

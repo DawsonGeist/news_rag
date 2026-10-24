@@ -41,13 +41,26 @@ def build_index(snapshot_dir: Path) -> dict[str, int]:
         SELECT src_entity_id AS src, dst_entity_id AS dst, relation, valid_from, valid_to
         FROM read_parquet('{snapshot_dir / "relations.parquet"}')
     """)
+    # People by surname (last word of the label; the first word for regnal names such as
+    # "Leo XIV"), for mentions that give only a surname. Notable people only.
+    con.execute(r"""
+        CREATE TABLE surnames AS
+        WITH p AS (
+            SELECT entity_id, sitelinks, string_split(lower(label), ' ') AS w
+            FROM entities WHERE type = 'person' AND sitelinks >= 3 AND label LIKE '% %'
+        )
+        SELECT DISTINCT CASE WHEN regexp_matches(w[-1], '^[ivxl]+$') THEN w[1] ELSE w[-1] END
+                   AS surname, entity_id, sitelinks
+        FROM p
+    """)
+    con.execute("CREATE INDEX surnames_surname ON surnames (surname)")
     con.execute("CREATE INDEX entities_id ON entities (entity_id)")
     con.execute("CREATE INDEX aliases_alias ON aliases (alias)")
     con.execute("CREATE INDEX relations_src ON relations (src)")
     con.execute("CREATE INDEX relations_dst ON relations (dst)")
     counts = {
         t: int(con.execute(f"SELECT count(*) FROM {t}").fetchone()[0])  # type: ignore[index]
-        for t in ("entities", "aliases", "relations")
+        for t in ("entities", "aliases", "relations", "surnames")
     }
     con.execute("CHECKPOINT")
     con.close()
@@ -86,14 +99,37 @@ class KbIndex:
     def __init__(self, snapshot_dir: Path) -> None:
         self.snapshot = snapshot_dir.name
         self.con = duckdb.connect(str(snapshot_dir / INDEX_FILE), read_only=True)
+        tables = {r[0] for r in self.con.execute("SHOW TABLES").fetchall()}
+        self._has_surnames = "surnames" in tables
 
     def close(self) -> None:
         self.con.close()
 
     def candidates(self, aliases: Iterable[str], per_alias: int = 20) -> dict[str, list[Candidate]]:
-        """Normalized alias → its most popular entities (by sitelink count)."""
+        """Normalized alias → its most popular entities (by sitelink count). Keys starting
+        with ``surname:`` look up people by surname instead (kind ``surname``)."""
         wanted = sorted(set(aliases))
         out: dict[str, list[Candidate]] = {a: [] for a in wanted}
+        surnames = [a.removeprefix("surname:") for a in wanted if a.startswith("surname:")]
+        wanted = [a for a in wanted if not a.startswith("surname:")]
+        if surnames and self._has_surnames:
+            rows = self.con.execute(
+                """
+                SELECT s.surname, e.entity_id, e.label, e.description, e.type, e.sitelinks
+                FROM (SELECT surname, entity_id,
+                             row_number() OVER (PARTITION BY surname ORDER BY sitelinks DESC)
+                                 AS rn
+                      FROM surnames WHERE surname IN (SELECT unnest(?))) s
+                JOIN entities e USING (entity_id)
+                WHERE s.rn <= ?
+                ORDER BY s.surname, e.sitelinks DESC
+                """,
+                [surnames, per_alias],
+            ).fetchall()
+            for sn, eid, label, desc, typ, sitelinks in rows:
+                out["surname:" + sn].append(
+                    Candidate(sn, KbEntity(eid, label, desc, typ, sitelinks), "surname")
+                )
         if not wanted:
             return out
         rows = self.con.execute(

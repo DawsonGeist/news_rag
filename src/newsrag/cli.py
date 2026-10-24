@@ -641,11 +641,11 @@ def eval_linking(
     )
     exs = examples(golds, results)  # type: ignore[arg-type]
     typer.echo(f"{version}: {len(exs)} gold mentions")
-    for t in (0.5, 0.6, 0.7, 0.8, 0.9):
+    for t in (0.4, 0.5, 0.6, 0.7, 0.8, 0.9):
         s = score(exs, WEIGHTS, t)
         typer.echo(f"  current weights @ {t}: precision {s.precision:.3f} recall {s.recall:.3f}")
     if fit_weights:
-        for t in (0.5, 0.6, 0.7, 0.8, 0.9):
+        for t in (0.4, 0.5, 0.6, 0.7, 0.8, 0.9):
             s = cross_validate(exs, t)
             typer.echo(
                 f"  fitted (5-fold) @ {t}: precision {s.precision:.3f} recall {s.recall:.3f}"

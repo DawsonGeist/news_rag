@@ -83,7 +83,7 @@ _TITLE = re.compile(
     r"(?:the\s+)?(?:president|vice president|governor|senator|representative|congressman|"
     r"congresswoman|mayor|judge|justice|chief justice|secretary|attorney general|"
     r"sheriff|commissioner|councilman|councilwoman|councilmember|chairman|chairwoman|"
-    r"chair|ceo|coach|pope|king|queen|prince|princess|bishop|cardinal|rabbi|pastor|"
+    r"chair|ceo|coach|pope|king|queen|prince|princess|archbishop|bishop|cardinal|rabbi|pastor|"
     r"officer|deputy|detective|sergeant|lieutenant|captain|general|colonel|admiral|"
     r"former|late|u\.s\.|state))\s+",
     re.IGNORECASE,

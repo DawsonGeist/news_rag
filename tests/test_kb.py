@@ -222,6 +222,9 @@ def test_index_lookups(dump: Path, tmp_path: Path) -> None:
     cands = kb.candidates(["r. delgado", "millbrook", "nobody"])
     assert [c.entity.entity_id for c in cands["r. delgado"]] == ["wd:Q1001"]
     assert cands["millbrook"][0].entity.type == "location" and cands["nobody"] == []
+    by_surname = kb.candidates(["surname:delgado"])["surname:delgado"]
+    assert [c.entity.entity_id for c in by_surname] == ["wd:Q1001"]
+    assert by_surname[0].kind == "surname"
     assert kb.entities(["wd:Q2001"])["wd:Q2001"].label == "Millbrook Ledger Company"
     rels = kb.relations_among(["wd:Q1001", "wd:Q2001", "wd:Q3001"])
     assert {(r.src, r.relation, r.dst) for r in rels} == {

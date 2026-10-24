@@ -26,7 +26,7 @@ def synthetic(n: int, seed: int = 0) -> list[Example]:
             (
                 gold,
                 {
-                    "prior": rng.uniform(0, 0.5),
+                    "popularity": rng.uniform(0, 0.5),
                     "type": 1.0,
                     "label": 1.0,
                     "context": rng.uniform(0.6, 1.0),
@@ -36,7 +36,7 @@ def synthetic(n: int, seed: int = 0) -> list[Example]:
             (
                 f"wd:X{i}",
                 {
-                    "prior": rng.uniform(0.5, 1.0),
+                    "popularity": rng.uniform(0.5, 1.0),
                     "type": 1.0,
                     "label": 1.0,
                     "context": rng.uniform(0.0, 0.5),
@@ -51,7 +51,7 @@ def synthetic(n: int, seed: int = 0) -> list[Example]:
 def test_fit_learns_to_prefer_context() -> None:
     exs = synthetic(200)
     w = fit(exs)
-    assert w["context"] > w["prior"]
+    assert w["context"] > w["popularity"]
     fitted = score(exs, w, 0.5)
     assert fitted.precision > 0.75 and fitted.linked > 0
     cv = cross_validate(exs, 0.5)

@@ -161,7 +161,7 @@ The expected size is a few million entities and a few tens of GB, measured on th
 2. **P2.1 Segmenter** (done, `seg-1`), plus the vector-store prototype on the real archive (passages, two embedders) → decision.
 3. **P2.2 KB build** (1 hop): `newsrag kb build` (dump → shards → snapshot) built and tested; the first full snapshot (`20261019`) builds after the dump download. Graph store decided: Neo4j.
 4. **P2.3 Enricher process** (built, `enrich-1`): segment and embed in micro-batches into Qdrant, newest first, with index lag in `report lag`; backfill of the archive under `run all`.
-5. **P2.4 NER, coreference, linking and snippets,** plus the linking test set.
+5. **P2.4 NER, coreference, linking and snippets** (built: GLiNER, fastcoref, `link-2` fitted on the 300-mention author-verified test set, precision 0.91 at recall 0.62 cross-validated), backfilling under `run all`.
 6. **P2.5 Eval tooling,** with the author's queries labelled.
 7. **P2.6 Soak** (enricher under `run all`), kill test, and Gate 2 review.
 

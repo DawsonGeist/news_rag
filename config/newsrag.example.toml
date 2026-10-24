@@ -51,7 +51,7 @@ qdrant_url = "http://127.0.0.1:6333"
 qdrant_wait_s = 120.0
 compact_interval_s = 3600.0
 compact_target_mb = 128
-entities = false            # entity queue; on once the linker is calibrated
+entities = true             # entity queue (needs an indexed KB snapshot)
 entity_batch_docs = 64
 
 [vet]

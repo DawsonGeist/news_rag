@@ -2,7 +2,7 @@
 
 Newest first. Each entry records what was decided, why, and what would reopen it.
 
-## 2026-10-23: P2.4 entities (in progress)
+## 2026-10-23: P2.4 entities
 
 | Decision | Choice | Why | Revisit if |
 | --- | --- | --- | --- |
@@ -12,7 +12,10 @@ Newest first. Each entry records what was decided, why, and what would reopen it
 | Coreference | **fastcoref** (F-Coref) 2.1.6 with a one-line transformers 5 shim; articles over 2,000 words split at paragraphs | Good clusters on archive samples ("Kevin Finley … him … his", "Zero Motorcycles … The company … its"); maverick-coref would downgrade protobuf and pin nltk | It breaks on a dependency update |
 | Linker | **Not ReFinED** (not installable on Python 3.14 / transformers 5): our own scorer over alias-index candidates, with popularity, type agreement, label match, bge-m3 context similarity (passage vs "label: description") and KB coherence, combined by logistic weights **fitted on the linking test set** | Local, explainable features; the features the design listed | Precision under 0.9 after fitting |
 | Snippets at rest | `Snippet.text` is optional and empty when stored; the locator gives the text | Snippets would otherwise copy most of the archive again (about 22 KB/doc, over 100 GB/yr) | — |
-| Entity queue | A second queue in the enricher, gated on the revision's vectors, with version `ents-1/link-1+<snapshot>.<kb_version>`; entity IDs tagged on the revision's Qdrant points (`entities` payload, indexed) and kept in `enrichments.entity_ids`, so re-written vectors keep them. **Off by default** until the linker is fitted. | A new KB or linker re-links without re-embedding; the archive is backfilled once, with calibrated weights | — |
+| Linking model (`link-2`) | A **conditional logit**: each mention's candidates and a "not in Wikidata" option in one softmax. Features: log popularity, most-popular and dominant candidate, type agreement, label match, context similarity (absolute and relative to the best candidate), KB coherence, surname-only match, NER type. Weights fitted on the 300 author-verified mentions (`eval/linking.yaml`). **Threshold 0.7: precision 0.91, recall 0.62 (5-fold cross-validated)**; 0.93 / 0.61 in-sample. | Independent per-candidate logistic regression gave badly calibrated confidences (about 20 candidates per mention); share-of-sitelinks popularity under-rated dominant entities (Texas) | Precision on new samples falls under 0.9 |
+| Candidate generation | Variants (curly apostrophes, AP state abbreviations, parentheticals, plurals for organizations and products); a **surname index** of notable people (`surnames` in `kb.duckdb`) for lone surnames; short organization names join a longer one in the same article; "Archbishop" is a title | 30 of 175 gold entities were never candidates ("Trump", "Pope Leo", "Fla.", "Kevin O’Connell") | — |
+| Known gaps | Creative works (films, books) are not in the KB; sports teams named by their city ("Houston", "Los Angeles") link to the city; local people who share a famous name are the main false links | Recorded for the next KB and linker versions | — |
+| Entity queue | A second queue in the enricher, gated on the revision's vectors, with version `ents-1/link-1+<snapshot>.<kb_version>`; entity IDs tagged on the revision's Qdrant points (`entities` payload, indexed) and kept in `enrichments.entity_ids`, so re-written vectors keep them. On by default since the linker was fitted (`link-2`). | A new KB or linker re-links without re-embedding; the archive is backfilled once, with calibrated weights | — |
 
 ## 2026-10-23: P2.3 enricher
 

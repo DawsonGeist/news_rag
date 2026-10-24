@@ -21,6 +21,7 @@ from newsrag.kb.dump import extract_dump
 from newsrag.kb.index import KbIndex, build_index
 from newsrag.link.coref import Cluster
 from newsrag.link.lane import EntityLane, entity_pipeline_version
+from newsrag.link.linker import LINKER_VERSION
 from newsrag.link.ner import Span
 from newsrag.link.stage import EntityStage, VectorSource
 from newsrag.link.tables import MENTION_LINKS, MENTIONS, SNIPPETS, from_table
@@ -118,7 +119,7 @@ def test_entity_queue_end_to_end(tmp_path: Path, conn: sqlite3.Connection, kb_di
         enricher.run_until_idle()
 
         version = enricher.entity_lane.pipeline_version
-        assert version == "ents-1/link-1+20261019.kb-3"
+        assert version == f"ents-1/{LINKER_VERSION}+20261019.kb-3"
         states = dict(conn.execute("SELECT pipeline_version, state FROM enrichments").fetchall())
         assert states == {"enrich-1": "done", version: "done"}
 

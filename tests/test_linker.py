@@ -40,6 +40,25 @@ def test_strip_title_handles_stacked_titles() -> None:
 
 def test_variants() -> None:
     assert variants("The Millbrook Ledger") == ["the millbrook ledger", "millbrook ledger"]
+    assert "rosa o'delgado" in variants("Rosa O’Delgado")
+    assert "florida" in variants("Fla.")
+    assert "millbrook speedway" in variants("Millbrook (Fla.) Speedway")
+    assert "clipclop" in variants("ClipClops", EntityType.PRODUCT)
+    assert "clipclop" not in variants("ClipClops", EntityType.PERSON)
+
+
+def test_lone_surname_gets_surname_candidates() -> None:
+    from newsrag.link.linker import candidate_keys
+
+    keys = candidate_keys(Group("delgado", EntityType.PERSON, ["Delgado"], ["a" * 32], {0}))
+    assert "surname:delgado" in keys
+
+
+def test_short_org_name_joins_longer_one() -> None:
+    groups = group_mentions(
+        [nm(1, "Zero", EntityType.ORGANIZATION), nm(2, "Zero Motorcycles", EntityType.ORGANIZATION)]
+    )
+    assert [g.key for g in groups] == ["zero motorcycles"] and len(groups[0].mention_ids) == 2
 
 
 def nm(i: int, surface: str, t: EntityType = EntityType.PERSON, passage: int = 0) -> NamedMention:
